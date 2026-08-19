@@ -1,0 +1,54 @@
+# crawl-worker ServiceAccount for reconciler dispatch (worker clusters).
+#
+# Applied in the scraw namespace of EVERY worker cluster (tencent, aliyun,
+# zihan, america). The xinru reconciler's ClusterK8sClient authenticates with
+# this token + the cluster CA (stored as <cluster>.token/<cluster>.ca keys in
+# the worker-kubeconfigs Secret on the control plane) and needs exactly:
+# create ConfigMaps, create Jobs, poll Job status. Nothing else — the worker
+# SA never touches Secrets/Services/Deployments, which is why the forwarder
+# and gost run as hostNetwork Jobs with plain env (proxy-fw-job.yaml /
+# gost-job.yaml).
+#
+# Token extraction after apply:
+#   k3s kubectl -n scraw get secret crawl-worker-token -o jsonpath='{.data.token}'  | base64 -d > /tmp/<cluster>.token
+#   k3s kubectl -n scraw get secret crawl-worker-token -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/<cluster>.ca
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crawl-worker
+  namespace: scraw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crawl-worker
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crawl-worker
+subjects:
+- kind: ServiceAccount
+  name: crawl-worker
+  namespace: scraw
+roleRef:
+  kind: ClusterRole
+  name: crawl-worker
+  apiGroup: rbac.authorization.k8s.io
+---
+# Non-expiring Secret-based token — the reconciler holds it long-term.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: crawl-worker-token
+  namespace: scraw
+  annotations:
+    kubernetes.io/service-account.name: crawl-worker
+type: kubernetes.io/service-account-token

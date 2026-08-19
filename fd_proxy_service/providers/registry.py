@@ -1,0 +1,87 @@
+"""Provider registry — loads providers, picks one per fetch in priority order.
+
+Provider *kind* and *priority* are code-level config here (not DB columns) —
+this keeps ``proxies`` purely an address book: a row says *where* an upstream
+is, the registry says *how* it's picked. Onboarding a new proxy source = a
+``seed_provider`` call (addresses) + a registry entry here (kind + priority).
+
+``acquire_any(source)`` tries providers in ascending ``priority``; the first
+that returns a non-``None`` ``Acquisition`` wins. If every provider returns
+``None`` (all circuits OPEN, or nothing seeded), it returns ``None`` and the
+forwarder falls back to direct egress (ships-dark) — matching the
+``circuit.py`` graceful-degradation property: with no healthy upstream,
+behavior matches the pre-proxy baseline.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from fd_proxy_service.providers.base import Acquisition, ProxyProvider
+from fd_proxy_service.providers.gost_own import GostOwnProvider
+
+# Code-level provider config: (factory, priority). Lower priority = tried
+# first. ``factory(session) -> ProxyProvider``. To add a provider, append a
+# row here + seed its addresses (seed.seed_provider).
+_REGISTRY: list[tuple] = [
+    # gost-own: each worker's own cluster gost. Priority 0 — always try the
+    # in-cluster forwarder first (zero firewall, lowest latency).
+    (lambda session: GostOwnProvider(session, priority=0), 0),
+    # External ``endpoint`` providers (paid rotating APIs, tor) are appended
+    # here at a higher priority so gost-own is preferred when healthy. They
+    # are only tried once gost-own's circuit is OPEN — the decoupled-IP
+    # fallback the two-tier design exists to provide.
+]
+
+
+def all_providers(session: Session) -> list[ProxyProvider]:
+    """Instantiate every registered provider against ``session``."""
+    return [factory(session) for factory, _ in _REGISTRY]
+
+
+def get_provider(name: str, session: Session) -> Optional[ProxyProvider]:
+    """Look up a provider by name (None if not registered)."""
+    for prov in all_providers(session):
+        if prov.name == name:
+            return prov
+    return None
+
+
+def acquire_any(source: str, session: Session) -> Optional[Acquisition]:
+    """Try providers in priority order; return the first non-None Acquisition.
+
+    Returns None when no provider has a healthy upstream — the forwarder then
+    egresses direct (ships-dark).
+    """
+    providers = sorted(all_providers(session), key=lambda p: p.priority)
+    for prov in providers:
+        acq = prov.acquire(source)
+        if acq is not None:
+            return acq
+    return None
+
+
+def release(
+    source: str, addr_id: Optional[int], outcome: str,
+    provider: Optional[str], session: Session,
+) -> None:
+    """Dispatch a release to the owning provider (by name).
+
+    ``provider`` is carried on the ``Acquisition``; if unknown or the provider
+    is gone, fall back to the raw circuit update (the circuit key depends only
+    on ``addr_id``, not the provider class).
+    """
+    from fd_proxy_service import circuit
+    if addr_id is None:
+        return
+    prov = get_provider(provider, session) if provider else None
+    if prov is not None:
+        prov.release(source, addr_id, outcome)
+    else:
+        circuit.record_outcome(source, addr_id, outcome)
+
+
+def health_all(session: Session) -> list[dict]:
+    """Snapshot of every provider (for ``GET /providers``)."""
+    return [prov.health() for prov in all_providers(session)]

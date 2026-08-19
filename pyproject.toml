@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fd-proxy-service"
+dynamic = ["version"]
+description = "Standalone proxy service for the finddata crawl stack: provider abstraction, circuit breaker, per-worker forwarder"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "FindDataTechnology" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: Proxy Servers",
+]
+dependencies = [
+    "click>=8.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "redis>=5.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+proxy-control = "fd_proxy_service.control.__main__:main"
+proxy-fw = "fd_proxy_service.forwarder.__main__:main"
+fd-proxy-service = "fd_proxy_service.cli:cli"
+
+[tool.setuptools.dynamic]
+version = { attr = "fd_proxy_service.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["fd_proxy_service", "fd_proxy_service.*"]
+
+[project.urls]
+Homepage = "https://github.com/FindDataTechnology/fd-proxy-service"
+Repository = "https://github.com/FindDataTechnology/fd-proxy-service"
+Documentation = "https://github.com/FindDataTechnology/fd-proxy-service#readme"
+Issues = "https://github.com/FindDataTechnology/fd-proxy-service/issues"
+Changelog = "https://github.com/FindDataTechnology/fd-proxy-service/releases"

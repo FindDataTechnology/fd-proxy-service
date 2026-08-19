@@ -1,0 +1,72 @@
+# Throwaway diag Job: verify the aliyun proxy-fw forwarder IN-CLUSTER.
+#
+# The crawl-worker SA on aliyun can create jobs.batch but NOT get pods / exec /
+# get secrets, so we can't read the forwarder's logs or curl it from another pod
+# directly. This Job runs hostNetwork on the same node (127.0.0.1:8080 = the
+# forwarder), curls /health + /acquire, and EXFILTRATES the JSON result through
+# proxy-redis (master NodePort 30381, authed — reachable cross-cluster) under key
+# `diag:proxyfw:aliyun`. We then read that key from master via
+# `kubectl exec proxy-control -- python -c "..."` (proxy-control reaches
+# proxy-redis in-cluster). Same technique that confirmed the tencent forwarder.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: diag-proxyfw-aliyun
+  namespace: scraw
+data:
+  diag.py: |
+    import urllib.request, json, os, traceback
+    def call(method, path, body=None):
+        req = urllib.request.Request(
+            "http://127.0.0.1:8080" + path, method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return {"status": r.status, "body": r.read().decode()[:800]}
+        except Exception as e:
+            return {"error": repr(e)}
+    res = {
+        "/health":  call("GET",  "/health"),
+        "/acquire": call("POST", "/acquire", {"source": "eastmoney"}),
+    }
+    print("DIAG_RESULT:", json.dumps(res, ensure_ascii=False))
+    try:
+        import redis
+        r = redis.from_url(os.environ["PROXY_REDIS_URL"])
+        r.set("diag:proxyfw:aliyun", json.dumps(res, ensure_ascii=False))
+        print("WROTE diag:proxyfw:aliyun")
+    except Exception:
+        traceback.print_exc()
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: diag-proxyfw-aliyun
+  namespace: scraw
+  labels: {app: diag-proxyfw}
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels: {app: diag-proxyfw}
+    spec:
+      hostNetwork: true
+      restartPolicy: OnFailure
+      containers:
+      - name: diag
+        image: harbor.local/lawcraw_business/fd-proxy-service:latest
+        command: ["python", "/diag/diag.py"]
+        env:
+        - name: PROXY_REDIS_URL
+          value: "redis://:CHANGE_ME@<proxy-redis-host>:30381/0"
+        volumeMounts:
+        - {name: diag, mountPath: /diag, readOnly: true}
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits:   {cpu: 200m, memory: 256Mi}
+      volumes:
+      - name: diag
+        configMap: {name: diag-proxyfw-aliyun}

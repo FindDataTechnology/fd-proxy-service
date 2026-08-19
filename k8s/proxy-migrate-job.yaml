@@ -1,0 +1,67 @@
+# One-shot migration + seed for fd-proxy-service (tasks 2.1 / 2.2 / 2.3 / 9.2).
+#
+# Breaks the chicken-and-egg where proxy-control's /health probe queries
+# `proxies.provider` (added by this migration) before the column exists. The
+# Job reads PROXY_DATABASE_URL from the same master-db-secret the control plane
+# uses, so the credential is never baked into the image or the manifest.
+#
+# Steps (all idempotent — safe to re-apply by deleting + recreating the Job):
+#   1. Base.metadata.create_all  — creates ban_rules/rate_limits/probes if they
+#      don't exist. No-op on the existing `proxies` table (create_all never ALTERs).
+#   2. migrations/001_add_provider_cols.sql — additive ALTER (provider +
+#      provider_meta) on proxies, backfill gost-*/direct rows, retire free-proxy.
+#   3. seed_all — gost-own provider address (127.0.0.1:30080) + ban_rules +
+#      rate_limits + probes rows.
+#
+# Apply on the MASTER cluster:
+#   kubectl -n scraw apply -f k8s/proxy-migrate-job.yaml
+#   kubectl -n scraw wait --for=condition=complete job/proxy-migrate --timeout=180s
+#   kubectl -n scraw logs job/proxy-migrate
+# (re-run:  kubectl -n scraw delete job proxy-migrate && kubectl -n scraw apply -f ...)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: proxy-migrate
+  namespace: scraw
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: proxy-migrate
+        image: harbor.local/lawcraw_business/fd-proxy-service:latest
+        command: ["python", "-c"]
+        args:
+        - |
+          import pathlib, sys, sqlalchemy
+          from fd_proxy_service.db import get_engine, get_session
+          from fd_proxy_service.models import Base
+          from fd_proxy_service import seed as seedmod
+          eng = get_engine()
+          # 1. create NEW tables only (ban_rules/rate_limits/probes). Skips the
+          #    existing `proxies` table — create_all never emits ALTER.
+          Base.metadata.create_all(eng)
+          print("CREATE_ALL_OK")
+          # 2. additive ALTER + backfill + retire. The SQL ships in the image at
+          #    /app/migrations/ (COPY . /app in the Dockerfile).
+          sqlpath = pathlib.Path("/app/migrations/001_add_provider_cols.sql")
+          if not sqlpath.exists():
+              print("MIGRATION_FILE_MISSING:", sqlpath)
+              print("SQL_FILES_ON_IMAGE:", [str(p) for p in pathlib.Path("/app").rglob("*.sql")])
+              sys.exit(2)
+          sql = sqlpath.read_text()
+          stmts = [s.strip() for s in sql.split(";") if s.strip()]
+          with eng.begin() as c:
+              for stmt in stmts:
+                  c.execute(sqlalchemy.text(stmt))
+          print("MIGRATION_OK statements:", len(stmts))
+          # 3. seed gost-own provider + ban_rules/rate_limits/probes (idempotent upserts).
+          with get_session() as s:
+              seedmod.seed_all(s)
+              s.commit()
+          print("SEED_OK")
+        env:
+        - name: PROXY_DATABASE_URL
+          valueFrom: {secretKeyRef: {name: master-db-secret, key: DATABASE_URL}}
