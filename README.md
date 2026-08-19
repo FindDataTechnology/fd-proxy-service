@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-Standalone proxy service for the [finddata](https://github.com/FindDataTechnology)
+Standalone proxy service for the [finddata](https://github.com/FindDataTechnology/fd-proxy-service)
 crawl stack. It owns proxy provider selection, the per-`(source, addr_id)`
 circuit breaker, and a per-worker forwarder, so `scraw` crawlers stay
 proxy-ignorant — they call one local in-cluster address and the service handles
