@@ -1,0 +1,26 @@
+# Keep the build context lean — the Dockerfile does `COPY . /build/fd-proxy-service`
+# (builder) and `COPY . /app` (runtime), so everything here ships into both image
+# stages. Exclude VCS, caches, local venvs, and build artifacts.
+.git
+.gitignore
+.github
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+.eggs
+dist
+build
+*.egg
+.DS_Store
+*.tar.gz
+*.tgz
+# Local dev scratch / diagnostics not needed in the image.
+diag.py
+fix_gost.py
+migrate.py
+fps-fix.tar.gz
+fd-proxy-service.tar.gz

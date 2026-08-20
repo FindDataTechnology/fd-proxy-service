@@ -21,6 +21,7 @@ concurrency). New sources declare their own ban signals here at onboarding.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -270,16 +271,92 @@ def seed_gost_own(session: Session) -> dict[str, str]:
     return seed_provider(session, "gost-own", GOST_OWN_ADDRESSES, auth=auth)
 
 
+# ─── gost-mesh provider (sibling-server gosts over the private mesh) ───────
+# gost-mesh is a pool-kind provider whose addresses are the gost forward-proxy
+# on each cloud server, reached via the private WireGuard mesh (100.64.0.x:30080)
+# — NOT public NodePorts (which are firewalled / Kong-hijacked). Each address is
+# a separate ``proxies`` row with its OWN circuit key
+# ``circuit:{source}:{addr_id}``, so a ban on one server's IP opens ONLY that
+# address's circuit — the rest stay healthy and the next fetch rotates to a
+# sibling. This is the per-IP isolation gost-own's single shared row cannot
+# provide, achieved by seeding N rows + registering a second provider: NO
+# selection-logic rewrite (the pool selector already iterates N addresses).
+#
+# Verified-egress mesh set (gost listening on :30080 AND a cross-verify fetch
+# egressed the server's own public IP, 2026-08-20): chengsi (.1 -> 124.220.7.175),
+# aliyun (.2 -> 47.99.94.85), zihan (.4 -> 106.55.20.23). america (.5) gost TCP-
+# listens but the egress fetch FAILED (deferred — re-add via the env override or
+# by uncommenting its row once fixed; the circuit self-heals on first failure).
+# The DB/control hosts — guangzhou-xinru (.3, sole canonical PG+Redis) and the
+# shards xinru2 (.6) / xinru3 (.7) — run NO gost by design (control-plane role,
+# not egress). Onboard a new server by adding its mesh IP here (or via the env
+# override) + re-running ``fd-proxy-service seed``; no
+# selector/registry/crawler code change.
+#
+# Known minor redundancy: a worker on server X egresses the SAME IP whether it
+# uses gost-own (its own cluster's gost) or the gost-mesh row for X — so when X's
+# IP is banned, both circuits trip (in sequence, one wasted retry). Acceptable:
+# 2 of 3 mesh rows are genuinely decoupled for any given worker. Excluding the
+# self-IP per-worker would need per-worker filtering the fleet-wide registry
+# doesn't do; deferred. The genuinely-decoupled IPs are the value here.
+#
+# Same ``FD_EGRESS_AUTH`` as gost-own: all gost instances share one basic-auth
+# credential (per-row override available via ``auth`` in the address dict).
+GOST_MESH_ADDRESSES: list[dict] = [
+    {"scheme": "http", "ip": "100.64.0.1", "port": 30080, "label": "gost-mesh-chengsi"},
+    {"scheme": "http", "ip": "100.64.0.2", "port": 30080, "label": "gost-mesh-aliyun"},
+    {"scheme": "http", "ip": "100.64.0.4", "port": 30080, "label": "gost-mesh-zihan"},
+]
+
+
+def _parse_mesh_override(raw: str) -> list[dict]:
+    """Parse the ``GOST_MESH_ADDRESSES`` env override as a JSON list.
+
+    Each item is an address dict (``scheme`` defaults ``http``, ``port``
+    30080) or a bare ``"host:port"`` string.
+    """
+    out: list[dict] = []
+    for it in json.loads(raw):
+        if isinstance(it, str):  # bare "host:port"
+            host, _, port = it.partition(":")
+            out.append({"scheme": "http", "ip": host,
+                        "port": int(port) if port else 30080})
+        else:
+            d = dict(it)
+            d.setdefault("scheme", "http")
+            d.setdefault("port", 30080)
+            out.append(d)
+    return out
+
+
+def seed_gost_mesh(session: Session) -> dict[str, str]:
+    """Seed the gost-mesh provider's sibling-server addresses.
+
+    Reads the gost basic-auth from ``FD_EGRESS_AUTH`` (same shared credential
+    as gost-own — all gost instances share one basic-auth) and the address set
+    from the ``GOST_MESH_ADDRESSES`` env (JSON list or ``host:port`` CSV)
+    overriding the default ``GOST_MESH_ADDRESSES`` above. Idempotent upsert by
+    ``provider='gost-mesh'``+``label``. Call after deploying gost on each target
+    server so the endpoints answer; re-run after adding a server to refresh.
+    """
+    auth = os.environ.get("FD_EGRESS_AUTH", _DEFAULT_EGRESS_AUTH)
+    override = os.environ.get("GOST_MESH_ADDRESSES")
+    addresses = _parse_mesh_override(override) if override else GOST_MESH_ADDRESSES
+    return seed_provider(session, "gost-mesh", addresses, auth=auth)
+
+
 def seed_all(session: Session) -> dict:
     """Idempotently seed ban_rules, source_rate_limits, source_probes, and the
-    gost-own provider. Returns a summary of what was created/updated."""
+    gost-own + gost-mesh providers. Returns a summary of what was
+    created/updated."""
     rules = _seed_ban_rules(session)
     limits = _seed_rate_limits(session)
     probes = _seed_probes(session)
     gost = seed_gost_own(session)
+    mesh = seed_gost_mesh(session)
     session.commit()
     return {"ban_rules": rules, "rate_limits": limits, "probes": probes,
-            "gost_own": gost}
+            "gost_own": gost, "gost_mesh": mesh}
 
 
 if __name__ == "__main__":

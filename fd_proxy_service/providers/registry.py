@@ -20,17 +20,26 @@ from sqlalchemy.orm import Session
 
 from fd_proxy_service.providers.base import Acquisition, ProxyProvider
 from fd_proxy_service.providers.gost_own import GostOwnProvider
+from fd_proxy_service.providers.pool_provider import PoolProvider
 
 # Code-level provider config: (factory, priority). Lower priority = tried
 # first. ``factory(session) -> ProxyProvider``. To add a provider, append a
 # row here + seed its addresses (seed.seed_provider).
 _REGISTRY: list[tuple] = [
     # gost-own: each worker's own cluster gost. Priority 0 — always try the
-    # in-cluster forwarder first (zero firewall, lowest latency).
+    # in-cluster forwarder first (zero firewall, zero mesh hops, lowest
+    # latency, no 3 Mbps mesh cap).
     (lambda session: GostOwnProvider(session, priority=0), 0),
+    # gost-mesh: sibling-server gosts over the private WireGuard mesh
+    # (100.64.0.x:30080). Priority 1 — the per-IP-isolation fallback: when
+    # gost-own's shared circuit is OPEN (own IP banned), rotate to a healthy
+    # sibling-server gost, each with its OWN circuit key. Uses the generic
+    # PoolProvider directly (no loopback-rewrite — mesh IPs are directly
+    # reachable, unlike gost-own's 127.0.0.1 which needs node-IP rewrite).
+    (lambda session: PoolProvider("gost-mesh", session, priority=1), 1),
     # External ``endpoint`` providers (paid rotating APIs, tor) are appended
-    # here at a higher priority so gost-own is preferred when healthy. They
-    # are only tried once gost-own's circuit is OPEN — the decoupled-IP
+    # here at a higher priority so gost-own/gost-mesh are preferred when
+    # healthy. They are only tried once both are exhausted — the decoupled-IP
     # fallback the two-tier design exists to provide.
 ]
 
