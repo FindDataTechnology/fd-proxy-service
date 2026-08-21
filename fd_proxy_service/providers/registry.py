@@ -57,15 +57,21 @@ def get_provider(name: str, session: Session) -> Optional[ProxyProvider]:
     return None
 
 
-def acquire_any(source: str, session: Session) -> Optional[Acquisition]:
+def acquire_any(source: str, session: Session,
+                exclude: Optional[list[int]] = None) -> Optional[Acquisition]:
     """Try providers in priority order; return the first non-None Acquisition.
 
     Returns None when no provider has a healthy upstream — the forwarder then
     egresses direct (ships-dark).
+
+    ``exclude`` is addr_ids already tried in this caller's fetch loop; passed
+    to each provider so a dead proxy is not re-acquired within one fetch
+    (Bug 5). None/empty = no exclusion (degrades to today's behavior against
+    an old caller that omits the field).
     """
     providers = sorted(all_providers(session), key=lambda p: p.priority)
     for prov in providers:
-        acq = prov.acquire(source)
+        acq = prov.acquire(source, exclude=exclude)
         if acq is not None:
             return acq
     return None

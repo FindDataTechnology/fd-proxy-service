@@ -60,10 +60,13 @@ class ProxyProvider(Protocol):
     name: str
     priority: int
 
-    def acquire(self, source: str) -> Optional[Acquisition]:
+    def acquire(self, source: str,
+                exclude: Optional[list[int]] = None) -> Optional[Acquisition]:
         """Pick one healthy upstream for ``source``. ``None`` = this provider
         has no healthy upstream (all circuits OPEN/saturated, or no addresses);
-        ``registry.acquire_any`` then tries the next provider."""
+        ``registry.acquire_any`` then tries the next provider. ``exclude`` is
+        addr_ids already tried this fetch — skipped so a dead proxy is not
+        re-acquired (Bug 5)."""
         ...
 
     def release(self, source: str, addr_id: Optional[int], outcome: str) -> None:

@@ -34,6 +34,10 @@ from fd_proxy_service.providers import acquire_any, health_all, release
 
 class AcquireRequest(BaseModel):
     source: str
+    # addr_ids already tried in this caller's fetch loop — the forwarder skips
+    # them so a dead proxy isn't re-acquired within one fetch (Bug 5). Absent
+    # on old callers / empty = no exclusion (graceful with an old forwarder).
+    exclude: list[int] = []
 
 
 class AcquisitionResponse(BaseModel):
@@ -59,7 +63,7 @@ def create_app() -> FastAPI:
 
     @app.post("/acquire", response_model=AcquisitionResponse)
     def acquire(req: AcquireRequest, session: Session = Depends(session_dep)) -> AcquisitionResponse:
-        acq = acquire_any(req.source, session)
+        acq = acquire_any(req.source, session, exclude=req.exclude)
         if acq is None:
             # Ships-dark: no healthy upstream. Caller egresses direct.
             return AcquisitionResponse(upstream_url=None, addr_id=None, provider=None)

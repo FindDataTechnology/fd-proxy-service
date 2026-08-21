@@ -1,8 +1,9 @@
 """Per-request upstream picker for the forwarder.
 
 For a source: enumerate the active provider addresses (direct first), skip any
-whose circuit is OPEN/HALF_OPEN/permanent, skip any at its QPS cap, and acquire
-a rate token on the first selectable one. Returns the chosen
+whose circuit is OPEN/HALF_OPEN/permanent, skip any at its QPS cap, skip
+addr_ids the caller already tried this fetch (Bug 5), and acquire a rate token
+on the next selectable one — rotating the start across calls (Bug 10). Returns the chosen
 ``(addr_id, Proxy)`` or ``None`` to signal source-level failure (every address
 banned/saturated) so the forwarder can fail the request or fall back to a
 lower-priority provider.
@@ -45,6 +46,14 @@ class _Direct:
 _DIRECT = _Direct()
 
 
+# Per-(source, provider) round-robin start offset (Bug 10). Advances by one
+# past the chosen address on each successful pick so consecutive calls spread
+# across addresses instead of always hammering the first-row id — no single IP
+# is hammered until it gets banned. A lost increment under concurrency only
+# costs fairness for one cycle, never correctness (every pick is still valid).
+_CURSORS: dict[tuple[str, Optional[str]], int] = {}
+
+
 class ProxySelector:
     """Low-level per-request picker over registered provider addresses."""
 
@@ -52,7 +61,8 @@ class ProxySelector:
         self.session = session
 
     def select(
-        self, source: str, provider: Optional[str] = None
+        self, source: str, provider: Optional[str] = None,
+        exclude: Optional[list[int]] = None,
     ) -> Optional[tuple[Optional[int], object]]:
         """Pick one selectable address for ``source``.
 
@@ -60,6 +70,9 @@ class ProxySelector:
             source: real_source name (e.g. ``eastmoney``) or library fallback.
             provider: if given, restrict to one provider's addresses
                 (``Proxy.provider == provider``); None = all active rows.
+            exclude: addr_ids to skip — already tried in this caller's fetch
+                loop, so a dead proxy is not re-acquired within one fetch
+                (Bug 5). None/empty = no exclusion.
         """
         rl = pool.get_rate_limit(self.session, source)
         max_qps = rl.max_qps if rl else _DEFAULT_QPS
@@ -72,10 +85,23 @@ class ProxySelector:
             # This provider owns no addresses -> return None so the registry
             # tries the next provider (do NOT claim direct for a specific pool).
             return None
-        for p in proxies:
+        exclude_set = set(exclude) if exclude else set()
+        # Round-robin start (Bug 10): begin at the per-(source,provider) cursor
+        # instead of always row 0, so consecutive calls hit different addresses
+        # and no single IP is hammered until it gets banned.
+        key = (source, provider)
+        start = _CURSORS.get(key, 0)
+        n = len(proxies)
+        for i in range(n):
+            p = proxies[(start + i) % n]
+            if p.id in exclude_set:
+                continue  # tried this one already in this fetch (Bug 5)
             if not circuit.is_selectable(source, p.id):
                 continue
             if not rate_limit.acquire(source, p.id, max_qps):
                 continue
+            # Advance the cursor past the chosen address so the next call
+            # starts at the following row (round-robin distribution).
+            _CURSORS[key] = (start + i + 1) % n
             return (p.id, p)
-        return None  # addresses exist but all OPEN/saturated -> source-level failover
+        return None  # all excluded/OPEN/saturated -> source-level failover

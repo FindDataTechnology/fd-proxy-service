@@ -56,11 +56,17 @@ class EndpointProvider:
         self._cache = (now, addrs)
         return addrs
 
-    def acquire(self, source: str) -> Optional[Acquisition]:
+    def acquire(self, source: str,
+                exclude: Optional[list[int]] = None) -> Optional[Acquisition]:
         addrs = self._addresses()
         if not addrs:
             return None  # not seeded — registry tries the next provider
         a = addrs[0]
+        if exclude and a.id in set(exclude):
+            # this fetch already tried the single rotating address — try the
+            # next provider (exclude rarely matters for an endpoint provider,
+            # but the contract is honored for consistency).
+            return None
         if not circuit.is_selectable(source, a.id):
             return None  # provider-level circuit OPEN — try next provider
         return Acquisition(

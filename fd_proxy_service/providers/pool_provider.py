@@ -18,7 +18,7 @@ The forwarder classifies the outcome via ``ban_rules`` before calling this.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -42,8 +42,9 @@ class PoolProvider:
         self.priority = priority
         self._selector = ProxySelector(session)
 
-    def acquire(self, source: str):
-        result = self._selector.select(source, provider=self.name)
+    def acquire(self, source: str, exclude: Optional[list[int]] = None):
+        result = self._selector.select(
+            source, provider=self.name, exclude=exclude)
         if result is None:
             return None
         addr_id, proxy = result

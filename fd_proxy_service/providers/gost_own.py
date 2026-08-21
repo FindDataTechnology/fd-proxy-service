@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import urllib.parse
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -71,8 +72,8 @@ class GostOwnProvider(PoolProvider):
     def __init__(self, session: Session, priority: int = 0):
         super().__init__(name="gost-own", session=session, priority=priority)
 
-    def acquire(self, source: str):
-        acq = super().acquire(source)
+    def acquire(self, source: str, exclude: Optional[list[int]] = None):
+        acq = super().acquire(source, exclude=exclude)
         if acq is None or not acq.upstream_url:
             return acq
         acq.upstream_url = _node_reachable(acq.upstream_url)
