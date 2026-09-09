@@ -37,6 +37,11 @@ _REGISTRY: list[tuple] = [
     # PoolProvider directly (no loopback-rewrite — mesh IPs are directly
     # reachable, unlike gost-own's 127.0.0.1 which needs node-IP rewrite).
     (lambda session: PoolProvider("gost-mesh", session, priority=1), 1),
+    # paid-static: externally purchased static endpoints (panel-ops-console),
+    # imported via the management API as provider-managed ``proxies`` rows.
+    # Priority 2 — tried once both gost tiers are circuit-exhausted, so paid
+    # bandwidth is only spent when the free tiers are banned.
+    (lambda session: PoolProvider("paid-static", session, priority=2), 2),
     # External ``endpoint`` providers (paid rotating APIs, tor) are appended
     # here at a higher priority so gost-own/gost-mesh are preferred when
     # healthy. They are only tried once both are exhausted — the decoupled-IP

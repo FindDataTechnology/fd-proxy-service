@@ -79,6 +79,35 @@ class Proxy(Base):
         }
 
 
+class SourceProxyHealth(Base):
+    """Cold aggregate of per-(source, proxy_id) circuit health (panel-ops-console).
+
+    Maps the SAME physical master-DB table the crawler's fd-open-data-mcp ORM
+    writes; added here so the management API can persist a manual circuit
+    reset to the auditable record, not just the Redis hot state. Columns match
+    the crawler-side definition; the crawler keeps writing the fetch-driven
+    updates, this class only touches rows on explicit management actions.
+    """
+    __tablename__ = "source_proxy_health"
+    __table_args__ = (
+        UniqueConstraint("source", "proxy_id", name="uq_source_proxy"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, index=True)
+    proxy_id = Column(Integer, nullable=False, index=True)
+    state = Column(String(16), nullable=False, default="closed")  # closed / open / half_open
+    fail_streak = Column(Integer, nullable=False, default=0)
+    success_streak = Column(Integer, nullable=False, default=0)
+    last_fetch_at = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    banned_at = Column(DateTime, nullable=True)
+    cooldown_until = Column(DateTime, nullable=True)
+    open_cycles = Column(Integer, nullable=False, default=0)
+    permanent = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
+
+
 class BanRule(Base):
     """Per-source ban-classification rule. Matched in priority order (desc); first
     match wins. rule_type: status (http status code/pattern), error (exception

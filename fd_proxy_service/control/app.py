@@ -20,14 +20,15 @@ they need. See ``design.md`` (Open Questions) for the forwarder-shape decision.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from fd_proxy_service import circuit
+from fd_proxy_service import circuit, management
 from fd_proxy_service.db import session_dep
 from fd_proxy_service.providers import acquire_any, health_all, release
 
@@ -51,6 +52,31 @@ class ReleaseRequest(BaseModel):
     addr_id: Optional[int] = None
     provider: Optional[str] = None
     outcome: str  # ok / transient / ban / blocked
+
+
+# ── management (panel-ops-console): panel-driven proxy administration ────────
+class ImportRequest(BaseModel):
+    provider: str = "paid-static"
+    # pasted lines ("ip|port|user|pass") — structured endpoints may replace
+    # this later; the paste format is the operator's actual workflow
+    text: str
+
+
+class ProxyStatusRequest(BaseModel):
+    status: str  # active / retired
+    actor: Optional[str] = None
+
+
+class CircuitResetRequest(BaseModel):
+    source: str
+    proxy_id: int
+    actor: Optional[str] = None
+
+
+class RateLimitRequest(BaseModel):
+    # max_qps 0/null = no forwarder-side throttling for the source
+    max_qps: Optional[float] = None
+    max_concurrent: Optional[int] = None
 
 
 def create_app() -> FastAPI:
@@ -111,5 +137,66 @@ def create_app() -> FastAPI:
     @app.get("/circuits")
     def circuits() -> list[dict]:
         return circuit.all_circuits()
+
+    # ── management endpoints (panel-ops-console) ─────────────────────────────
+    # Mutating operations behind an optional MANAGEMENT_TOKEN (checked when
+    # set) — /acquire stays tokenless like today, management is new surface
+    # and the control API is exposed on a NodePort.
+    def _mgmt_guard(management_token: Optional[str]) -> None:
+        expected = os.environ.get("MANAGEMENT_TOKEN")
+        if expected and management_token != expected:
+            raise HTTPException(status_code=401, detail="invalid management token")
+
+    @app.post("/management/proxies/import")
+    def import_proxies(
+        req: ImportRequest, session: Session = Depends(session_dep),
+        x_management_token: Optional[str] = Header(default=None),
+    ) -> dict:
+        _mgmt_guard(x_management_token)
+        try:
+            endpoints = management.parse_endpoint_lines(req.text)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return management.import_static_endpoints(session, req.provider, endpoints)
+
+    @app.post("/management/proxies/{proxy_id}/status")
+    def set_proxy_status(
+        proxy_id: int, req: ProxyStatusRequest,
+        session: Session = Depends(session_dep),
+        x_management_token: Optional[str] = Header(default=None),
+    ) -> dict:
+        _mgmt_guard(x_management_token)
+        try:
+            return management.set_proxy_status(session, proxy_id, req.status, req.actor)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+    @app.post("/management/circuits/reset")
+    def reset_circuit(
+        req: CircuitResetRequest, session: Session = Depends(session_dep),
+        x_management_token: Optional[str] = Header(default=None),
+    ) -> dict:
+        _mgmt_guard(x_management_token)
+        return management.manual_reset_circuit(session, req.source, req.proxy_id, req.actor)
+
+    @app.get("/management/rate-limits")
+    def get_rate_limits(
+        session: Session = Depends(session_dep),
+        x_management_token: Optional[str] = Header(default=None),
+    ) -> list[dict]:
+        _mgmt_guard(x_management_token)
+        return management.list_rate_limits(session)
+
+    @app.put("/management/rate-limits/{source}")
+    def put_rate_limit(
+        source: str, req: RateLimitRequest,
+        session: Session = Depends(session_dep),
+        x_management_token: Optional[str] = Header(default=None),
+    ) -> dict:
+        _mgmt_guard(x_management_token)
+        try:
+            return management.set_rate_limit(session, source, req.max_qps, req.max_concurrent)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
     return app

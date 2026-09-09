@@ -278,6 +278,46 @@ def write_outcome(source: str, outcome: dict) -> None:
         logger.debug("outcomes stream write failed: %s", e)
 
 
+def manual_reset(source: str, proxy_id: int, actor: Optional[str] = None) -> dict:
+    """Operator-forced transition OPEN/permanent -> HALF_OPEN (panel-ops-console).
+
+    Bypasses the cooldown timer, clears the fail and transient streaks, and
+    clears `permanent` / `open_cycles` (the operator has asserted recovery; a
+    genuinely-banned IP re-opens via the normal state machine on the next
+    failure, at worst burning a few probe fetches). The transition is recorded
+    as manual in the hash itself (`manual_reset_at` / `manual_reset_by`).
+
+    Returns the new state dict. When Redis is unavailable (dark), returns a
+    HALF_OPEN dict WITHOUT persisting anything — the cold-table write in
+    ``management.manual_reset`` is still performed by the caller.
+    """
+    r = _client()
+    st = {"state": "half_open", "fail_streak": 0, "transient_streak": 0,
+          "success_streak": 0, "cooldown_until": None, "open_cycles": 0,
+          "permanent": False}
+    if r is None:
+        return st
+    now = time.time()
+    mapping = {
+        "state": "half_open",
+        "fail_streak": "0",
+        "transient_streak": "0",
+        "success_streak": "0",
+        "open_cycles": "0",
+        "permanent": "0",
+        "manual_reset_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    if actor:
+        mapping["manual_reset_by"] = actor
+    # cooldown_until and banned_at are deleted, not overwritten to empty
+    r.hdel(_key(source, proxy_id), "cooldown_until", "banned_at")
+    r.hset(_key(source, proxy_id), mapping=mapping)
+    logger.warning("circuit MANUAL RESET %s proxy=%d -> HALF_OPEN (by %s)",
+                   source, proxy_id, actor or "(operator)")
+    return st
+
+
 def all_circuits() -> list[dict]:
     """Snapshot every circuit (for the control API / monitoring). Returns
     [{source, proxy_id, state, fail_streak, open_cycles, permanent, cooldown_until}].
