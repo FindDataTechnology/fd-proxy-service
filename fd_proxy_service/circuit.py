@@ -1,7 +1,14 @@
-"""Per-(source, proxy_id) circuit breaker state, backed by Redis.
+"""Per-(source, unit) circuit breaker state, backed by Redis.
 
-Hot state lives in Redis (hash at ``circuit:{source}:{proxy_id}``) so all crawl
-pods share it with sub-ms reads. The state machine:
+Hot state lives in Redis (hash at ``circuit:{source}:{unit}``) so all crawl
+pods share it with sub-ms reads. The **unit** is the granularity the circuit
+keys on: for a provider that declares a shared egress IP
+(``provider_meta.exit_ip`` — e.g. the mihomo pool, where 24 of 28 ports exit
+through one IP) it is that IP, so a ban takes the whole group out at once
+instead of burning one attempt per port. Otherwise it is ``str(proxies.id)`` —
+the pre-group scheme, byte for byte, so existing per-address circuit state
+survives the upgrade (``pool.circuit_unit`` / ``pool.unit_for_proxy_id``
+resolve it). The state machine:
 
   CLOSED  --streak of BAN-->  OPEN (cooldown_until = now + COOLDOWN_SEC)
   CLOSED  --streak of TRANSIENT-->  OPEN (cooldown = TRANSIENT_COOLDOWN_SEC)
@@ -72,35 +79,37 @@ def _client():
     return _REDIS
 
 
-def _key(source: str, proxy_id: int) -> str:
+def _key(source: str, unit: str) -> str:
     """Generate Redis key for circuit state.
 
     Args:
         source: Source identifier. Can be:
             - real_source name (e.g., "eastmoney", "tencent") - preferred
             - library name (e.g., "akshare") - fallback when no real_sources declared
-        proxy_id: Proxy ID from the proxies table
+        unit: Circuit unit — ``str(proxies.id)`` for a per-address circuit, or
+            the shared exit IP for a grouped one (``pool.circuit_unit``).
     """
-    return f"circuit:{source}:{proxy_id}"
+    return f"circuit:{source}:{unit}"
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_state(source: str, proxy_id: int) -> dict:
+def get_state(source: str, unit: str) -> dict:
     """Return the circuit state dict (defaults to CLOSED if absent / no redis).
 
     Args:
         source: Source identifier (real_source or library name as fallback)
-        proxy_id: Proxy ID from the proxies table
+        unit: Circuit unit — ``str(proxies.id)`` for a per-address circuit, or
+            the shared exit IP for a grouped one (``pool.circuit_unit``).
     """
     r = _client()
     if r is None:
         return {"state": "closed", "fail_streak": 0, "transient_streak": 0,
                 "success_streak": 0, "cooldown_until": None, "open_cycles": 0,
                 "permanent": False}
-    raw = r.hgetall(_key(source, proxy_id))
+    raw = r.hgetall(_key(source, unit))
     if not raw:
         return {"state": "closed", "fail_streak": 0, "transient_streak": 0,
                 "success_streak": 0, "cooldown_until": None, "open_cycles": 0,
@@ -116,31 +125,32 @@ def get_state(source: str, proxy_id: int) -> dict:
     }
 
 
-def is_selectable(source: str, proxy_id: int) -> bool:
+def is_selectable(source: str, unit: str) -> bool:
     """A proxy is selectable for a crawl fetch iff its circuit is CLOSED (not
     OPEN, not HALF_OPEN - HALF_OPEN is touched only by the probe). Permanent
     proxies are never selectable."""
-    st = get_state(source, proxy_id)
+    st = get_state(source, unit)
     if st["permanent"]:
         return False
     return st["state"] == "closed"
 
 
-def record_outcome(source: str, proxy_id: int, classification: str) -> dict:
+def record_outcome(source: str, unit: str, classification: str) -> dict:
     """Apply the state machine to a classified outcome. Returns the new state.
 
     Args:
         source: Source identifier (real_source or library name as fallback)
-        proxy_id: Proxy ID from the proxies table
+        unit: Circuit unit — ``str(proxies.id)`` for a per-address circuit, or
+            the shared exit IP for a grouped one (``pool.circuit_unit``).
         classification: One of "ok", "transient", "ban", "blocked"
     """
     r = _client()
     if r is None:
         return {"state": "closed", "fail_streak": 0, "success_streak": 0,
                 "cooldown_until": None, "open_cycles": 0, "permanent": False}
-    st = get_state(source, proxy_id)
+    st = get_state(source, unit)
     now = time.time()
-    k = _key(source, proxy_id)
+    k = _key(source, unit)
 
     if classification == "ban":
         st["fail_streak"] += 1
@@ -149,8 +159,8 @@ def record_outcome(source: str, proxy_id: int, classification: str) -> dict:
             st["state"] = "open"
             st["cooldown_until"] = now + COOLDOWN_SEC
             st["banned_at"] = _now_iso()
-            logger.warning("circuit OPEN %s proxy=%d (fail_streak=%d)",
-                           source, proxy_id, st["fail_streak"])
+            logger.warning("circuit OPEN %s proxy=%s (fail_streak=%d)",
+                           source, unit, st["fail_streak"])
     elif classification == "ok":
         st["fail_streak"] = 0
         st["transient_streak"] = 0
@@ -159,7 +169,7 @@ def record_outcome(source: str, proxy_id: int, classification: str) -> dict:
             st["state"] = "closed"
             st["open_cycles"] = 0
             st["cooldown_until"] = None
-            logger.info("circuit CLOSED %s proxy=%d (probe/recovery)", source, proxy_id)
+            logger.info("circuit CLOSED %s proxy=%s (probe/recovery)", source, unit)
     elif classification == "transient":
         # A persistently-flaky endpoint is not just a blip: track it on a
         # separate streak so repeated timeouts / connection resets open the
@@ -171,8 +181,8 @@ def record_outcome(source: str, proxy_id: int, classification: str) -> dict:
             st["state"] = "open"
             st["cooldown_until"] = now + TRANSIENT_COOLDOWN_SEC
             st["banned_at"] = _now_iso()
-            logger.warning("circuit OPEN %s proxy=%d (transient_streak=%d)",
-                           source, proxy_id, st["transient_streak"])
+            logger.warning("circuit OPEN %s proxy=%s (transient_streak=%d)",
+                           source, unit, st["transient_streak"])
 
     mapping = {
         "state": st["state"],
@@ -191,20 +201,21 @@ def record_outcome(source: str, proxy_id: int, classification: str) -> dict:
     return st
 
 
-def probe_transition(source: str, proxy_id: int, probe_ok: bool) -> dict:
+def probe_transition(source: str, unit: str, probe_ok: bool) -> dict:
     """Used by the probe job: transition a HALF_OPEN circuit based on a probe
     fetch outcome. On failure, double cooldown (capped) and increment open_cycles;
     on PERMANENT_CYCLES reached, mark permanent.
 
     Args:
         source: Source identifier (real_source or library name as fallback)
-        proxy_id: Proxy ID from the proxies table
+        unit: Circuit unit — ``str(proxies.id)`` for a per-address circuit, or
+            the shared exit IP for a grouped one (``pool.circuit_unit``).
         probe_ok: True if probe succeeded, False if it failed
     """
     r = _client()
     if r is None:
         return {"state": "closed", "permanent": False}
-    st = get_state(source, proxy_id)
+    st = get_state(source, unit)
     now = time.time()
     if probe_ok:
         st["state"] = "closed"
@@ -212,7 +223,7 @@ def probe_transition(source: str, proxy_id: int, probe_ok: bool) -> dict:
         st["transient_streak"] = 0
         st["open_cycles"] = 0
         st["cooldown_until"] = None
-        logger.info("probe CLOSED %s proxy=%d", source, proxy_id)
+        logger.info("probe CLOSED %s proxy=%s", source, unit)
     else:
         st["state"] = "open"
         st["transient_streak"] = 0  # reset so a post-cooldown transient doesn't re-trip instantly
@@ -223,10 +234,10 @@ def probe_transition(source: str, proxy_id: int, probe_ok: bool) -> dict:
         st["open_cycles"] = st.get("open_cycles", 0) + 1
         if st["open_cycles"] >= PERMANENT_CYCLES:
             st["permanent"] = True
-            logger.warning("circuit PERMANENT %s proxy=%d - retire", source, proxy_id)
+            logger.warning("circuit PERMANENT %s proxy=%s - retire", source, unit)
         else:
-            logger.warning("probe re-OPEN %s proxy=%d (cycles=%d)",
-                           source, proxy_id, st["open_cycles"])
+            logger.warning("probe re-OPEN %s proxy=%s (cycles=%d)",
+                           source, unit, st["open_cycles"])
     mapping = {
         "state": st["state"], "fail_streak": st.get("fail_streak", 0),
         "transient_streak": st.get("transient_streak", 0),
@@ -236,13 +247,15 @@ def probe_transition(source: str, proxy_id: int, probe_ok: bool) -> dict:
     }
     if st.get("cooldown_until"):
         mapping["cooldown_until"] = str(st["cooldown_until"])
-    r.hset(_key(source, proxy_id), mapping={k: str(v) for k, v in mapping.items() if v is not None})
+    r.hset(_key(source, unit), mapping={k: str(v) for k, v in mapping.items() if v is not None})
     return st
 
 
-def open_for_probe(r_client=None) -> list[tuple[str, int]]:
+def open_for_probe(r_client=None) -> list[tuple[str, str]]:
     """Scan for circuits that are OPEN past their cooldown (ready for HALF_OPEN
-    probe). Used by the probe job. Returns [(source, proxy_id), ...].
+    probe). Used by the probe job. Returns ``[(source, unit), ...]`` where
+    ``unit`` is a string (a ``proxies.id`` rendered as text, or a shared exit
+    IP) — the caller resolves it to a concrete address to probe.
 
     Note: source here can be either real_source (preferred) or library name
     (fallback when real_sources not declared).
@@ -260,10 +273,10 @@ def open_for_probe(r_client=None) -> list[tuple[str, int]]:
             continue
         cd = h.get("cooldown_until")
         if cd and float(cd) <= now:
-            # parse source:proxy_id from "circuit:{source}:{proxy_id}"
+            # parse source:unit from "circuit:{source}:{unit}"
             parts = key.split(":", 2)
             if len(parts) == 3:
-                out.append((parts[1], int(parts[2])))
+                out.append((parts[1], parts[2]))
     return out
 
 
@@ -278,7 +291,7 @@ def write_outcome(source: str, outcome: dict) -> None:
         logger.debug("outcomes stream write failed: %s", e)
 
 
-def manual_reset(source: str, proxy_id: int, actor: Optional[str] = None) -> dict:
+def manual_reset(source: str, unit: str, actor: Optional[str] = None) -> dict:
     """Operator-forced transition OPEN/permanent -> HALF_OPEN (panel-ops-console).
 
     Bypasses the cooldown timer, clears the fail and transient streaks, and
@@ -311,16 +324,16 @@ def manual_reset(source: str, proxy_id: int, actor: Optional[str] = None) -> dic
     if actor:
         mapping["manual_reset_by"] = actor
     # cooldown_until and banned_at are deleted, not overwritten to empty
-    r.hdel(_key(source, proxy_id), "cooldown_until", "banned_at")
-    r.hset(_key(source, proxy_id), mapping=mapping)
-    logger.warning("circuit MANUAL RESET %s proxy=%d -> HALF_OPEN (by %s)",
-                   source, proxy_id, actor or "(operator)")
+    r.hdel(_key(source, unit), "cooldown_until", "banned_at")
+    r.hset(_key(source, unit), mapping=mapping)
+    logger.warning("circuit MANUAL RESET %s proxy=%s -> HALF_OPEN (by %s)",
+                   source, unit, actor or "(operator)")
     return st
 
 
 def all_circuits() -> list[dict]:
     """Snapshot every circuit (for the control API / monitoring). Returns
-    [{source, proxy_id, state, fail_streak, open_cycles, permanent, cooldown_until}].
+    [{source, unit, state, fail_streak, open_cycles, permanent, cooldown_until}].
 
     Note: source can be either real_source (preferred) or library name (fallback).
     """
@@ -336,7 +349,7 @@ def all_circuits() -> list[dict]:
         if len(parts) != 3:
             continue
         out.append({
-            "source": parts[1], "proxy_id": int(parts[2]),
+            "source": parts[1], "unit": parts[2],
             "state": h.get("state", "closed"),
             "fail_streak": int(h.get("fail_streak", 0)),
             "open_cycles": int(h.get("open_cycles", 0)),

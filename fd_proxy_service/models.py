@@ -65,6 +65,10 @@ class Proxy(Base):
     # ── migration 001 (add-proxy-service): provider-managed rows ──────────────
     provider = Column(String(64), nullable=True)  # owning provider name (gost-own, rotate-api, …)
     provider_meta = Column(JSONB, nullable=True)  # provider-specific metadata
+    # ── migration 002 (add-mihomo-proxy-provider) ─────────────────────────────
+    # Per-address global in-flight cap (all sources aggregated). NULL = the
+    # provider's own default (mihomo=2, others uncapped).
+    max_concurrency = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=_now)
     retired_at = Column(DateTime, nullable=True)
 
@@ -74,6 +78,7 @@ class Proxy(Base):
             "auth": self.auth, "status": self.status, "label": self.label,
             "cluster_id": self.cluster_id, "provider": self.provider,
             "provider_meta": self.provider_meta,
+            "max_concurrency": self.max_concurrency,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "retired_at": self.retired_at.isoformat() if self.retired_at else None,
         }
@@ -160,3 +165,21 @@ class SourceProbe(Base):
     params = Column(JSON, nullable=False, default=dict)
     enabled = Column(Boolean, nullable=False, default=True)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class SourceProviderRoute(Base):
+    """Ordered per-source provider preference (migration 002).
+
+    Absent row — or an empty ``providers`` list — means *unconfigured*: the
+    global priority ladder applies. A non-empty list pins selection to exactly
+    those providers, in order. Exhausting the list does NOT silently fall back
+    to a provider outside it: for an international source whose route is
+    ``["mihomo"]``, falling back to a gost CN exit would spend the fetch (and a
+    ban) on an egress the route exists to avoid.
+    """
+    __tablename__ = "source_provider_routes"
+
+    source = Column(String(64), primary_key=True)
+    providers = Column(JSONB, nullable=False, default=list)  # ordered provider names
+    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
+

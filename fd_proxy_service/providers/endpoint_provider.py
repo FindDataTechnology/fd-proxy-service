@@ -9,11 +9,11 @@ underlying IP).
 
 Implementation: the provider owns exactly one ``proxies`` row
 (``proxies.provider == self.name``); ``acquire`` returns it iff its circuit is
-selectable, ``release`` records the outcome on that single ``addr_id``. The
-circuit key ``circuit:{source}:{addr_id}`` is therefore the provider-level
-circuit — one address, one circuit. (Using the real ``proxies.id`` keeps the
-``int(parts[2])`` parse in ``circuit.open_for_probe`` / ``all_circuits`` valid;
-a string addr_id would break that scan.)
+selectable, ``release`` records the outcome on that single address. The circuit
+key ``circuit:{source}:{unit}`` is therefore the provider-level circuit — one
+address, one circuit. An endpoint provider declares no ``exit_ip`` (the IP
+rotates upstream-side, where we never see it), so its unit is
+``str(proxies.id)`` and the key is byte-identical to the pre-group scheme.
 
 A provider whose API offers session-sticky IPs (same IP for N minutes) can be
 modeled as an ``endpoint`` provider that, on a ``ban``, rotates the session
@@ -67,7 +67,7 @@ class EndpointProvider:
             # next provider (exclude rarely matters for an endpoint provider,
             # but the contract is honored for consistency).
             return None
-        if not circuit.is_selectable(source, a.id):
+        if not circuit.is_selectable(source, pool.circuit_unit(a)):
             return None  # provider-level circuit OPEN — try next provider
         return Acquisition(
             upstream_url=build_upstream_url(a),
@@ -78,7 +78,11 @@ class EndpointProvider:
     def release(self, source: str, addr_id, outcome: str) -> None:
         if addr_id is None:
             return
-        circuit.record_outcome(source, addr_id, outcome)
+        # No in-flight slot to return: this provider picks its single address
+        # directly instead of going through the selector, so it never reserves
+        # one (the address-wide cap is a selector-path concern).
+        circuit.record_outcome(
+            source, pool.unit_for_proxy_id(self.session, addr_id), outcome)
 
     def health(self) -> dict:
         addrs = self._addresses()

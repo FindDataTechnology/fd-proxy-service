@@ -22,7 +22,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from fd_proxy_service import circuit
+from fd_proxy_service import circuit, pool
 from fd_proxy_service.models import Proxy, SourceRateLimit, SourceProxyHealth
 from fd_proxy_service.seed import register_provider_address
 
@@ -138,17 +138,29 @@ def manual_reset_circuit(
     """Force a circuit OPEN/permanent -> HALF_OPEN, Redis hot state AND the
     cold ``source_proxy_health`` row (single writer: this code path, design D1).
 
+    The operator addresses one ``proxies.id``, but the circuit that address
+    drives may be keyed by a *unit* spanning several addresses (a shared exit
+    IP covers every port behind it). So the reset resolves the unit first:
+    clearing any one port of a banned exit restores the whole group, which is
+    the only meaningful semantic once the circuit is grouped.
+
     Failures after the reset re-open the circuit via the normal state machine;
-    the reset itself is marked manual in the Redis hash.
+    the reset itself is marked manual in the Redis hash. The cold table's
+    ``proxy_id`` is NOT NULL, so a group is recorded against its
+    lowest-numbered member — audit only, never read by selection.
     """
-    st = circuit.manual_reset(source, proxy_id, actor=actor)
+    unit = pool.unit_for_proxy_id(session, proxy_id)
+    st = circuit.manual_reset(source, unit, actor=actor)
+    row_id = pool.representative_proxy_id(session, unit)
+    if row_id is None:
+        row_id = proxy_id
     cold = (
         session.query(SourceProxyHealth)
-        .filter_by(source=source, proxy_id=proxy_id)
+        .filter_by(source=source, proxy_id=row_id)
         .one_or_none()
     )
     if cold is None:
-        cold = SourceProxyHealth(source=source, proxy_id=proxy_id)
+        cold = SourceProxyHealth(source=source, proxy_id=row_id)
         session.add(cold)
     cold.state = "half_open"
     cold.fail_streak = 0
@@ -156,7 +168,7 @@ def manual_reset_circuit(
     cold.open_cycles = 0
     cold.permanent = False
     session.commit()
-    return {"source": source, "proxy_id": proxy_id,
+    return {"source": source, "proxy_id": row_id, "unit": unit,
             "state": st["state"], "redis": circuit._client() is not None}
 
 

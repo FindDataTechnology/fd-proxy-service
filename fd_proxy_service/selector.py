@@ -1,12 +1,20 @@
 """Per-request upstream picker for the forwarder.
 
 For a source: enumerate the active provider addresses (direct first), skip any
-whose circuit is OPEN/HALF_OPEN/permanent, skip any at its QPS cap, skip
-addr_ids the caller already tried this fetch (Bug 5), and acquire a rate token
-on the next selectable one — rotating the start across calls (Bug 10). Returns the chosen
-``(addr_id, Proxy)`` or ``None`` to signal source-level failure (every address
-banned/saturated) so the forwarder can fail the request or fall back to a
-lower-priority provider.
+whose circuit is OPEN/HALF_OPEN/permanent, skip any at its QPS cap, skip any at
+its address-wide in-flight cap, skip addr_ids the caller already tried this
+fetch (Bug 5), and acquire a token on the next selectable one — rotating the
+start across calls (Bug 10). Returns the chosen ``(addr_id, Proxy)`` or ``None``
+to signal source-level failure (every address banned/saturated) so the
+forwarder can fail the request or fall back to a lower-priority provider.
+
+Circuits are keyed by *unit*, not by address: addresses sharing an egress IP
+(the mihomo pool) share one circuit, so a ban on that exit takes the whole group
+out at once. The loop therefore de-duplicates units — once a unit is known
+unselectable, its remaining addresses are skipped without re-consulting the
+circuit, so an exit-IP ban costs one check instead of one per port. Sibling
+addresses of a *selectable* unit are still tried individually, so a single
+port's own saturation does not shadow the rest of its group.
 
 Ships-dark: when NO addresses are registered, returns a synthetic direct
 sentinel (``addr_id=None``) — the forwarder egresses from its own node IP with
@@ -63,6 +71,7 @@ class ProxySelector:
     def select(
         self, source: str, provider: Optional[str] = None,
         exclude: Optional[list[int]] = None,
+        max_concurrency: Optional[int] = None,
     ) -> Optional[tuple[Optional[int], object]]:
         """Pick one selectable address for ``source``.
 
@@ -73,6 +82,8 @@ class ProxySelector:
             exclude: addr_ids to skip — already tried in this caller's fetch
                 loop, so a dead proxy is not re-acquired within one fetch
                 (Bug 5). None/empty = no exclusion.
+            max_concurrency: provider-level in-flight default, applied to any
+                address whose own ``max_concurrency`` is NULL. None = uncapped.
         """
         rl = pool.get_rate_limit(self.session, source)
         max_qps = rl.max_qps if rl else _DEFAULT_QPS
@@ -92,13 +103,30 @@ class ProxySelector:
         key = (source, provider)
         start = _CURSORS.get(key, 0)
         n = len(proxies)
+        # Units proven unselectable during THIS pass. Their sibling addresses
+        # are skipped outright — one OPEN exit IP must not cost one circuit
+        # check (and one caller attempt) per port behind it.
+        dead_units: set[str] = set()
         for i in range(n):
             p = proxies[(start + i) % n]
             if p.id in exclude_set:
                 continue  # tried this one already in this fetch (Bug 5)
-            if not circuit.is_selectable(source, p.id):
+            unit = pool.circuit_unit(p)
+            if unit in dead_units:
+                continue  # a sibling already proved this unit unselectable
+            if not circuit.is_selectable(source, unit):
+                dead_units.add(unit)
+                continue
+            # Address-wide in-flight cap first: it is the harder constraint (a
+            # shared egress), and reserving before consuming a QPS token means a
+            # saturated address does not leak one for the rest of the second.
+            cap = (p.max_concurrency
+                   if getattr(p, "max_concurrency", None) is not None
+                   else max_concurrency)
+            if not rate_limit.try_acquire_inflight(p.id, cap):
                 continue
             if not rate_limit.acquire(source, p.id, max_qps):
+                rate_limit.release_inflight(p.id)  # slot goes with the token
                 continue
             # Advance the cursor past the chosen address so the next call
             # starts at the following row (round-robin distribution).

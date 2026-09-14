@@ -10,9 +10,11 @@ exact stage:
   1. ``Base.metadata.create_all`` — creates ban_rules / rate_limits / probes
      (and any other new table) if absent. No-op on the existing ``proxies``
      table (create_all never emits ALTER).
-  2. ``migrations/001_add_provider_cols.sql`` — additive ALTER (provider +
-     provider_meta) on proxies, backfill gost-*/direct rows onto their owner,
-     retire the dead free-proxy rows.
+  2. every ``migrations/*.sql`` in filename (= apply) order — currently
+     ``001_add_provider_cols.sql`` (provider + provider_meta, backfill gost-*/
+     direct rows onto their owner, retire the dead free-proxy rows) and
+     ``002_mihomo_routing_concurrency.sql`` (``source_provider_routes`` table +
+     ``proxies.max_concurrency``).
   3. ``seed_all`` — gost-own provider address (127.0.0.1:30080, from
      ``FD_EGRESS_AUTH``) + ban_rules + rate_limits + probes rows.
 
@@ -117,6 +119,21 @@ def _advance_sequences(eng: sqlalchemy.engine.Engine) -> list[str]:
     return synced
 
 
+def _migration_files() -> list[pathlib.Path]:
+    """Migration ``.sql`` files, in filename (= apply) order.
+
+    Prefers the image path ``/app/migrations/``; falls back to the
+    ``migrations/`` dir next to this file so ``migrate.py`` is runnable from a
+    repo checkout too (local verification without building the image).
+    """
+    for d in (pathlib.Path("/app/migrations"), pathlib.Path(__file__).parent / "migrations"):
+        if d.is_dir():
+            files = sorted(d.glob("*.sql"))
+            if files:
+                return files
+    return []
+
+
 def main() -> int:
     print("START migrate")
     from fd_proxy_service.db import get_engine, get_session
@@ -138,32 +155,30 @@ def main() -> int:
     Base.metadata.create_all(eng)
     print("CREATE_ALL_OK")
 
-    # 2. additive ALTER + backfill + retire. The SQL ships in the image at
-    #    /app/migrations/ (COPY . /app in the Dockerfile). Run the WHOLE file
-    #    through psycopg2's raw connection: cursor.execute(script) parses `--`
-    #    comments + `;` separators server-side (same as `psql -f`), so no
-    #    client-side splitting / param-handling is involved. `ADD COLUMN IF NOT
-    #    EXISTS` + the `provider IS NULL` guards make the file idempotent, so
-    #    re-running after a partial run (the two ALTERs already applied) just
-    #    fills in the backfill + retire + verify.
-    sqlpath = pathlib.Path("/app/migrations/001_add_provider_cols.sql")
-    print("SQLPATH:", sqlpath, "exists:", sqlpath.exists())
-    if not sqlpath.exists():
+    # 2. additive migrations, in filename (= apply) order. The SQL ships in the
+    #    image at /app/migrations/ (COPY . /app in the Dockerfile). Run each
+    #    WHOLE file through psycopg2's raw connection: cursor.execute(script)
+    #    parses `--` comments + `;` separators server-side (same as `psql -f`),
+    #    so no client-side splitting / param-handling is involved. Every file is
+    #    written idempotent (`IF NOT EXISTS` + guarded UPDATEs), so re-running
+    #    after a partial run simply resumes.
+    migrations = _migration_files()
+    if not migrations:
         print(
-            "MIGRATION_FILE_MISSING. SQL files on image:",
+            "MIGRATION_FILES_MISSING. SQL files on image:",
             [str(p) for p in pathlib.Path("/app").rglob("*.sql")],
         )
         return 2
-    sql = sqlpath.read_text()
-    raw = eng.raw_connection()
-    try:
-        cur = raw.cursor()
-        cur.execute(sql)
-        raw.commit()
-        cur.close()
-    finally:
-        raw.close()
-    print("MIGRATION_OK")
+    for sqlpath in migrations:
+        raw = eng.raw_connection()
+        try:
+            cur = raw.cursor()
+            cur.execute(sqlpath.read_text())
+            raw.commit()
+            cur.close()
+        finally:
+            raw.close()
+        print("MIGRATION_OK", sqlpath.name)
 
     # 2b. advance id sequences past existing rows (proxies especially).
     print("SEQ_SYNCED:", _advance_sequences(eng))

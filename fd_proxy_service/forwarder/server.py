@@ -66,6 +66,10 @@ class CircuitSnapshot:
     (via the original ``circuit.record_outcome``) AND updates the local dict
     immediately so the change is visible to the next request in this process.
 
+    Entries are keyed by ``(source, unit)`` — the same key the Redis circuit
+    uses, so addresses sharing an exit IP share one cached entry and a ban on
+    that exit is visible for the whole group on the next lookup.
+
     Only ``is_selectable`` and ``record_outcome`` are patched onto the
     ``circuit`` module — ``get_state`` is left as the original Redis read so the
     write-path state machine (inside ``record_outcome``) computes from live
@@ -76,7 +80,7 @@ class CircuitSnapshot:
 
     def __init__(self, ttl_sec: float = SNAPSHOT_TTL_SEC) -> None:
         self._ttl = ttl_sec
-        self._cache: dict[Tuple[str, int], dict] = {}
+        self._cache: dict[Tuple[str, str], dict] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -113,13 +117,13 @@ class CircuitSnapshot:
 
     def _refresh(self) -> None:
         rows = circuit.all_circuits()
-        fresh: dict[Tuple[str, int], dict] = {}
+        fresh: dict[Tuple[str, str], dict] = {}
         for r in rows:
-            fresh[(r["source"], r["proxy_id"])] = r
+            fresh[(r["source"], r["unit"])] = r
         with self._lock:
             self._cache = fresh
 
-    def get_state(self, source: str, proxy_id: int) -> dict:
+    def get_state(self, source: str, unit: str) -> dict:
         """In-memory lookup; absent key = CLOSED (no circuit state yet).
 
         This is the read path for ``is_selectable``. The *write* path
@@ -127,19 +131,19 @@ class CircuitSnapshot:
         the original Redis-backed ``get_state`` inside ``_orig_record_outcome``.
         """
         with self._lock:
-            st = self._cache.get((source, proxy_id))
+            st = self._cache.get((source, unit))
         if st is None:
             return {"state": "closed", "fail_streak": 0, "success_streak": 0,
                     "cooldown_until": None, "open_cycles": 0, "permanent": False}
         return st
 
-    def is_selectable(self, source: str, proxy_id: int) -> bool:
-        st = self.get_state(source, proxy_id)
+    def is_selectable(self, source: str, unit: str) -> bool:
+        st = self.get_state(source, unit)
         if st.get("permanent"):
             return False
         return st.get("state", "closed") == "closed"
 
-    def record_outcome(self, source: str, proxy_id: int, outcome: str) -> dict:
+    def record_outcome(self, source: str, unit: str, outcome: str) -> dict:
         """Write to proxy-redis (source of truth) + update the local snapshot.
 
         Delegates the Redis write + state-machine computation to the ORIGINAL
@@ -148,10 +152,10 @@ class CircuitSnapshot:
         new state into the local dict so the next ``is_selectable`` in this
         process reflects it without waiting for a refresh tick.
         """
-        new_state = self._orig_record_outcome(source, proxy_id, outcome)
+        new_state = self._orig_record_outcome(source, unit, outcome)
         with self._lock:
-            self._cache[(source, proxy_id)] = {
-                "source": source, "proxy_id": proxy_id,
+            self._cache[(source, unit)] = {
+                "source": source, "unit": unit,
                 "state": new_state.get("state", "closed"),
                 "fail_streak": new_state.get("fail_streak", 0),
                 "open_cycles": new_state.get("open_cycles", 0),
