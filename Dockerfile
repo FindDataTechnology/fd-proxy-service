@@ -24,8 +24,12 @@ ARG BASE_IMAGE=python:3.12-slim
 
 FROM ${BASE_IMAGE} AS builder
 WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*
+# No build toolchain on purpose: every dependency (and its whole closure) ships a
+# cp312 manylinux wheel — psycopg2-binary, pydantic-core and sqlalchemy are the
+# only compiled ones. `apt-get install build-essential` pulled 90 MB from
+# deb.debian.org, which the cheap-fleet build host reaches at a few kB/s, turning
+# a 3-minute build into a 30-minute one that any hiccup kills. If a future dep
+# ever needs compiling, add the toolchain back AND point apt at a China mirror.
 COPY . /build/fd-proxy-service
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
