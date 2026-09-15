@@ -17,7 +17,12 @@
 # image vendors the local checkout (`pip install /build/fd-proxy-service`).
 # Once it is published, swap to `pip install fd-proxy-service` like the scraw
 # image does for fd-open-data-mcp.
-FROM python:3.12-slim AS builder
+# Overridable: the cheap-fleet build host cannot reach Docker Hub, so its
+# Jenkins job passes a mirror (`--build-arg BASE_IMAGE=docker.m.daocloud.io/...`).
+# Same convention as the platform repo. The default keeps GitHub Actions working.
+ARG BASE_IMAGE=python:3.12-slim
+
+FROM ${BASE_IMAGE} AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*
@@ -26,7 +31,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
  && /opt/venv/bin/pip install --no-cache-dir /build/fd-proxy-service
 
-FROM python:3.12-slim
+FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 # k8s mounts nothing here at runtime; the app reads config from env
