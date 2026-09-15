@@ -1,7 +1,12 @@
 """Seed the proxy-pool, ban-rules, rate-limits, and providers with defaults.
 
-Idempotent: re-running updates existing rows in place rather than duplicating.
-Run via ``fd-proxy-service seed`` or ``python -m fd_proxy_service.seed``.
+Idempotent: re-running updates existing rows in place rather than duplicating,
+and an address whose stored fields already match is left untouched (reported as
+``unchanged``). Run via ``fd-proxy-service seed`` or ``python -m fd_proxy_service.seed``.
+
+``seed_mihomo`` is deliberately NOT part of ``seed_all``: it probes 27 live
+listeners for their egress IP, so it belongs in its own Job (``fd-proxy-service
+seed-mihomo``) rather than in the migration path.
 
 Lifted + reworked from ``fd_open_data_mcp/proxy/seed.py``. The rework: instead
 of seeding flat proxy rows (``register_cluster_egress`` /
@@ -21,8 +26,12 @@ concurrency). New sources declare their own ban signals here at onboarding.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import logging
 import os
+import pathlib
+import urllib.request
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -32,8 +41,11 @@ from fd_proxy_service.models import (
     BanRule,
     Proxy,
     SourceProbe,
+    SourceProviderRoute,
     SourceRateLimit,
 )
+
+logger = logging.getLogger(__name__)
 
 # (rule_type, pattern, classification, streak_min, priority) per source.
 BAN_RULES: dict[str, list[tuple]] = {
@@ -204,6 +216,15 @@ def register_provider_address(
             provider_meta=provider_meta,
         ))
         return "created"
+    # Compare before writing: re-seeding with identical inputs must leave the row
+    # untouched AND say so, so "run the seed twice" is observably a no-op rather
+    # than 27 silent writes. Callers can then distinguish a real change (a port
+    # recovered, an exit IP moved) from a refresh.
+    if (row.status == status and row.scheme == scheme and row.ip == ip
+            and row.port == port and (row.auth or None) == (auth or None)
+            and (provider_meta is None or row.provider_meta == provider_meta)
+            and (cluster_id is None or row.cluster_id == cluster_id)):
+        return "unchanged"
     row.status = status
     row.scheme = scheme
     row.ip = ip
@@ -345,10 +366,229 @@ def seed_gost_mesh(session: Session) -> dict[str, str]:
     return seed_provider(session, "gost-mesh", addresses, auth=auth)
 
 
+# ─── mihomo provider (fixed-exit international pool) ─────────────────────────
+# The pool is an external asset on xinru-server2 (see INFRA-NOTES.md): 28
+# "mixed" (HTTP+SOCKS) listeners on the Tailscale address, each pinned to one
+# airport node, one Basic-auth credential per listener. This seed probes every
+# listener for its real egress IP and registers it.
+MIHOMO_NAME = "mihomo"
+MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "100.64.0.7")
+MIHOMO_CREDS_FILE = os.environ.get("MIHOMO_CREDS_FILE", "~/.finddata/proxy-creds.json")
+MIHOMO_NODE_MAP_FILE = os.environ.get(
+    "MIHOMO_NODE_MAP_FILE", "~/.finddata/mihomo-port-mapping.txt")
+MIHOMO_EXIT_PROBE_URL = os.environ.get("MIHOMO_EXIT_PROBE_URL", "https://api.ipify.org")
+MIHOMO_EXIT_PROBE_TIMEOUT = float(os.environ.get("MIHOMO_EXIT_PROBE_TIMEOUT", "8"))
+# Attempts per listener before it is called unreachable. More than one because
+# the FIRST dial through an airport node can exceed the timeout while the tunnel
+# warms: measured on the real pool, fx23 timed out once at 8 s and then answered
+# in 1.8-4.4 s on every subsequent attempt. One slow dial is not proof of death,
+# and retiring a healthy port contradicts the pool's expected size.
+MIHOMO_EXIT_PROBE_ATTEMPTS = int(os.environ.get("MIHOMO_EXIT_PROBE_ATTEMPTS", "2"))
+
+# fx02@30082 is dead and is deliberately NOT repaired: fixing it means editing
+# the server config and reloading, which would drop the sub2api connections
+# sharing that host. 27 ports is plenty, and a known-dead listener in the pool
+# would only be one more thing to circuit-break.
+MIHOMO_SKIP_PORTS = {30082}
+
+# Sources that must reach a foreign exit directly rather than warm up through CN
+# egress. Only the design's example is seeded: a route is EXCLUSIVE (an
+# exhausted route does not fall back to a provider outside it), so a source gets
+# pinned here only once its international nature is confirmed. Add the rest as
+# they onboard.
+MIHOMO_SOURCE_ROUTES: dict[str, list[str]] = {
+    "fred": [MIHOMO_NAME],
+}
+
+
+def _is_ip(text: str) -> bool:
+    """True for a bare IPv4/IPv6 literal — the only thing an exit probe may say."""
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
+
+
+def probe_exit_ip(host: str, port: int, auth: str, *,
+                  url: Optional[str] = None,
+                  timeout: Optional[float] = None,
+                  attempts: Optional[int] = None) -> Optional[str]:
+    """The egress IP observed through ``host:port``, or None if the probe failed.
+
+    The measured value is what the grouped circuit keys on — most of the mihomo
+    listeners exit through one IP — so it must be observed, not assumed. Any
+    failure returns None (never raises), and a response that is not an IP is
+    rejected so an error page can never be stored as an "exit IP".
+
+    Retried ``attempts`` times (default 2): the first dial through an airport
+    node can exceed the timeout while the tunnel warms, and a single slow dial
+    must not retire a port that is in fact healthy.
+
+    stdlib urllib with the credentials in the proxy URL. An explicit
+    ProxyHandler also overrides ``HTTP_PROXY``/``HTTPS_PROXY``, so an operator's
+    own proxy cannot silently sit between us and the listener being tested.
+    """
+    proxy = f"http://{auth}@{host}:{port}"
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    tries = MIHOMO_EXIT_PROBE_ATTEMPTS if attempts is None else attempts
+    for attempt in range(1, tries + 1):
+        try:
+            with opener.open(url or MIHOMO_EXIT_PROBE_URL,
+                             timeout=timeout or MIHOMO_EXIT_PROBE_TIMEOUT) as resp:
+                text = resp.read(64).decode("utf-8", "replace").strip()
+            if _is_ip(text):
+                return text
+            logger.debug("mihomo exit probe %s:%s attempt %d: non-IP %r",
+                         host, port, attempt, text[:32])
+        except Exception as e:  # noqa: BLE001 - any failure just means "not usable"
+            logger.debug("mihomo exit probe %s:%s attempt %d failed (%s)",
+                         host, port, attempt, e)
+    return None
+
+
+def _expand(path: str) -> pathlib.Path:
+    return pathlib.Path(os.path.expanduser(path))
+
+
+def load_mihomo_creds(path: Optional[str] = None) -> list[dict]:
+    """Per-listener credentials from ``MIHOMO_CREDS_FILE``.
+
+    The file is a JSON list holding BOTH the mihomo listeners and the gost
+    egress; only the ``mixed`` entries are mihomo ports, so everything else is
+    skipped. Credentials are never logged — the password travels only into the
+    ``proxies.auth`` column.
+    """
+    raw = json.loads(_expand(path or MIHOMO_CREDS_FILE).read_text())
+    out: list[dict] = []
+    for e in raw:
+        if str(e.get("type", "")).lower() not in ("mixed", "mix"):
+            continue  # e.g. the gost-egress row
+        try:
+            port = int(e["port"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        user, pw = e.get("user"), e.get("pass")
+        if not user or pw is None:
+            continue
+        out.append({
+            "port": port,
+            "auth": f"{user}:{pw}",
+            "fx": user,
+            "listener": e.get("name") or f"fixed-{port - 30080:02d}",
+        })
+    out.sort(key=lambda c: c["port"])
+    return out
+
+
+def load_node_map(path: Optional[str] = None) -> dict[int, str]:
+    """``port -> airport node`` from the port-mapping snapshot.
+
+    Mirrors the server's ``/root/mihomo/port-mapping.txt`` — lines of
+    ``fixed-01 :30081 fx01 美国02|x3.5|Stream|AI``. A missing file yields ``{}``:
+    the seed then records the measured exit IP without a node label, which is
+    still everything the grouped circuit needs.
+    """
+    p = _expand(path or MIHOMO_NODE_MAP_FILE)
+    if not p.is_file():
+        return {}
+    out: dict[int, str] = {}
+    for line in p.read_text().splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            out[int(parts[1].lstrip(":"))] = parts[3].strip()
+        except ValueError:
+            continue
+    return out
+
+
+def _seed_source_routes(
+    session: Session, routes: dict[str, list[str]],
+) -> dict[str, str]:
+    """Idempotent upsert of the per-source provider routes."""
+    result: dict[str, str] = {}
+    for source, providers in routes.items():
+        row = session.get(SourceProviderRoute, source)
+        if row is None:
+            session.add(SourceProviderRoute(source=source, providers=list(providers)))
+            result[source] = "created"
+        elif list(row.providers or []) == list(providers):
+            result[source] = "unchanged"
+        else:
+            row.providers = list(providers)
+            result[source] = "updated"
+    return result
+
+
+def seed_mihomo(
+    session: Session,
+    *,
+    creds: Optional[list[dict]] = None,
+    node_map: Optional[dict[int, str]] = None,
+    prober=None,
+) -> dict:
+    """Register the mihomo fixed-exit pool + its international source routes.
+
+    Every listener is probed for its egress IP first: that measured value is
+    what the grouped circuit keys on, and a listener that cannot be reached is
+    registered ``retired`` rather than ``active`` — a dead port must never enter
+    the pool.
+
+    Idempotent: an address whose stored fields already match is left untouched
+    and reported ``unchanged``, so a re-run is a no-op unless the pool actually
+    moved (a port recovered, or the airport shifted an exit IP).
+
+    ``creds`` / ``node_map`` / ``prober`` are injectable, so this is testable
+    without the network or the credential file.
+    """
+    creds = load_mihomo_creds() if creds is None else creds
+    nodes = load_node_map() if node_map is None else node_map
+    prober = probe_exit_ip if prober is None else prober
+
+    outcomes: list[str] = []
+    retired: list[str] = []
+    for c in creds:
+        port = c["port"]
+        if port in MIHOMO_SKIP_PORTS:
+            continue  # fx02 — permanently skipped (see MIHOMO_SKIP_PORTS)
+        exit_ip = prober(MIHOMO_HOST, port, c["auth"])
+        label = f"{MIHOMO_NAME}-{c['fx']}"
+        if exit_ip is None:
+            retired.append(label)
+            logger.warning("mihomo %s (%s:%s) unreachable — seeding retired",
+                           c["fx"], MIHOMO_HOST, port)
+        outcomes.append(register_provider_address(
+            session,
+            provider=MIHOMO_NAME, scheme="http", ip=MIHOMO_HOST, port=port,
+            auth=c["auth"], label=label,
+            status="active" if exit_ip else "retired",
+            provider_meta={
+                "exit_ip": exit_ip,
+                "node": nodes.get(port),
+                "fx": c["fx"],
+                "listener": c.get("listener"),
+            },
+        ))
+    routes = _seed_source_routes(session, MIHOMO_SOURCE_ROUTES)
+    session.commit()
+
+    summary = {k: outcomes.count(k) for k in ("created", "updated", "unchanged")}
+    summary.update(retired=retired, skipped_ports=sorted(MIHOMO_SKIP_PORTS),
+                   routes=routes)
+    logger.info("seed_mihomo: %s", summary)
+    return summary
+
+
 def seed_all(session: Session) -> dict:
     """Idempotently seed ban_rules, source_rate_limits, source_probes, and the
     gost-own + gost-mesh providers. Returns a summary of what was
-    created/updated."""
+    created/updated.
+
+    mihomo is NOT seeded here — it does live egress probes, so it runs as its
+    own step (``fd-proxy-service seed-mihomo`` / ``seed.seed_mihomo``)."""
     rules = _seed_ban_rules(session)
     limits = _seed_rate_limits(session)
     probes = _seed_probes(session)

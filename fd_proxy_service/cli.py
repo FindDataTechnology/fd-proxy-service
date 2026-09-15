@@ -3,9 +3,10 @@
 This is the operator-facing CLI (the control-plane HTTP API is ``proxy-control``).
 Run on the master node (or anywhere with master DB + proxy-redis reach):
 
-  fd-proxy-service seed        # seed gost-own + ban_rules/rate_limits/probes
-  fd-proxy-service providers   # snapshot provider health + addresses
-  fd-proxy-service circuits    # snapshot circuit states from proxy-redis
+  fd-proxy-service seed          # seed gost-own/-mesh + ban_rules/rate_limits/probes
+  fd-proxy-service seed-mihomo   # register the mihomo pool (live egress probes)
+  fd-proxy-service providers     # snapshot provider health + addresses
+  fd-proxy-service circuits      # snapshot circuit states from proxy-redis
 """
 from __future__ import annotations
 
@@ -34,6 +35,22 @@ def seed_cmd() -> None:
         seed.seed_all(s)
         s.commit()
     click.echo("seeded gost-own + ban_rules/rate_limits/probes")
+
+
+@cli.command(name="seed-mihomo")
+def seed_mihomo_cmd() -> None:
+    """Register the mihomo fixed-exit pool (probes each listener's egress IP).
+
+    Needs ``MIHOMO_CREDS_FILE`` (the mounted Secret) and optionally
+    ``MIHOMO_NODE_MAP_FILE``. Separate from ``seed`` because it does live network
+    probes — an unreachable listener is registered retired rather than active.
+    Idempotent: a re-run with an unchanged pool reports zeros.
+    """
+    Base.metadata.create_all(get_engine())
+    with get_session() as s:
+        out = seed.seed_mihomo(s)
+        s.commit()
+    click.echo(out)
 
 
 @cli.command(name="providers")
