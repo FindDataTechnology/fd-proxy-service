@@ -31,7 +31,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: proxy-migrate
-        image: harbor.local/lawcraw_business/fd-proxy-service:latest
+        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
         command: ["python", "-c"]
         args:
         - |
