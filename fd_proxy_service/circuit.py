@@ -280,17 +280,6 @@ def open_for_probe(r_client=None) -> list[tuple[str, str]]:
     return out
 
 
-def write_outcome(source: str, outcome: dict) -> None:
-    """Append a fetch outcome to the real-time reporting stream (XADD)."""
-    r = _client()
-    if r is None:
-        return
-    try:
-        r.xadd(f"outcomes:{source}", {k: str(v) for k, v in outcome.items()}, maxlen=10000, approximate=True)
-    except Exception as e:  # noqa: BLE001
-        logger.debug("outcomes stream write failed: %s", e)
-
-
 def manual_reset(source: str, unit: str, actor: Optional[str] = None) -> dict:
     """Operator-forced transition OPEN/permanent -> HALF_OPEN (panel-ops-console).
 
@@ -356,30 +345,4 @@ def all_circuits() -> list[dict]:
             "permanent": h.get("permanent", "0") in ("1", "true", "True"),
             "cooldown_until": h.get("cooldown_until"),
         })
-    return out
-
-
-def recent_outcomes(source: str, n: int = 10) -> list[dict]:
-    """Last n outcomes from the reporting stream (for monitoring)."""
-    r = _client()
-    if r is None:
-        return []
-    try:
-        entries = r.xrevrange(f"outcomes:{source}", count=n)
-    except Exception:
-        return []
-    return [{"id": _id, **{k: v for k, v in fields.items()}} for _id, fields in entries]
-
-
-def sources_all_proxies_open(session) -> list[str]:
-    """Sources where every registered proxy is OPEN/permanent (alert trigger).
-    Empty when no proxies registered or any proxy is still CLOSED."""
-    circuits = all_circuits()
-    by_source: dict[str, list[dict]] = {}
-    for c in circuits:
-        by_source.setdefault(c["source"], []).append(c)
-    out = []
-    for source, cs in by_source.items():
-        if cs and all(c["state"] == "open" or c["permanent"] for c in cs):
-            out.append(source)
     return out

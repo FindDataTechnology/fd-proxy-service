@@ -44,20 +44,6 @@ def acquire(source: str, proxy_id: int, max_qps: float) -> bool:
     return count <= max_qps
 
 
-def capacity_available(source: str, proxy_id: int, max_qps: float) -> bool:
-    """Check without consuming (used by the selector to filter). Acquire then
-    immediately refund is racy; instead peek the current-second counter."""
-    r = _client()
-    if r is None or max_qps is None or max_qps <= 0:
-        return True
-    sec = int(time.time())
-    try:
-        count = int(r.get(f"rate:{source}:{proxy_id}:{sec}") or 0)
-    except Exception:
-        return True
-    return count < max_qps
-
-
 # ─── per-address global in-flight cap ────────────────────────────────────────
 # The QPS counter above is per (source, address): N sources each under their own
 # quota can still pile N×max_qps in-flight requests onto ONE address. That is

@@ -9,7 +9,7 @@ which provider served the request. Add a proxy source = add a provider class
 Two kinds (see ``base.ProxyProvider``):
 - ``pool``    — N addresses, circuit + rate-limit per address (``PoolProvider``).
 - ``endpoint``— one rotating-upstream address, per-provider circuit
-                (``EndpointProvider``).
+                (none registered yet).
 
 Registered providers: ``GostOwnProvider`` (each worker's own cluster gost at
 ``127.0.0.1:30080``), gost-mesh (sibling-server gosts over the WireGuard mesh),
@@ -18,7 +18,6 @@ Registered providers: ``GostOwnProvider`` (each worker's own cluster gost at
 ``registry._REGISTRY`` + seeding addresses.
 """
 from fd_proxy_service.providers.base import Acquisition, ProxyProvider, build_upstream_url
-from fd_proxy_service.providers.endpoint_provider import EndpointProvider
 from fd_proxy_service.providers.gost_own import GostOwnProvider
 from fd_proxy_service.providers.mihomo import MihomoProvider
 from fd_proxy_service.providers.pool_provider import PoolProvider
@@ -35,7 +34,6 @@ __all__ = [
     "Acquisition",
     "ProxyProvider",
     "PoolProvider",
-    "EndpointProvider",
     "GostOwnProvider",
     "MihomoProvider",
     "build_upstream_url",
