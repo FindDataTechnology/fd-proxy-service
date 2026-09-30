@@ -1,5 +1,7 @@
 name: TCR Region Speed Test
 on:
+  push:
+    branches: [tcr-speed-test]
   workflow_dispatch:
     inputs:
       size_mb:
