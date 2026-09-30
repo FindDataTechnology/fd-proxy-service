@@ -1,0 +1,57 @@
+name: TCR Region Speed Test
+on:
+  workflow_dispatch:
+    inputs:
+      size_mb:
+        description: 'Test layer size (MB)'
+        required: true
+        default: '500'
+
+jobs:
+  speed-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        endpoint:
+          - ccr.ccs.tencentyun.com
+          - hkccr.ccs.tencentyun.com
+          - uswccr.ccs.tencentyun.com
+    steps:
+      - name: Login ${{ matrix.endpoint }}
+        run: echo '${{ secrets.TCR_PASSWORD }}' | docker login '${{ matrix.endpoint }}' -u '${{ secrets.TCR_USERNAME }}' --password-stdin
+
+      - name: Build test image
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe
+          dd if=/dev/urandom of=speedtest.bin bs=1M count=${{ inputs.size_mb }} status=none
+          printf 'FROM scratch\nCOPY speedtest.bin /speedtest.bin\n' > Dockerfile
+          echo "TAG=${{ matrix.endpoint }}/finddata/tcr-speed-probe:gh-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          docker build -q -t "$TAG" .
+
+      - name: Timed push
+        run: |
+          S=$(date +%s.%N)
+          docker push "$TAG" > /tmp/push.log 2>&1 || { cat /tmp/push.log; exit 1; }
+          E=$(date +%s.%N)
+          python3 - "$S" "$E" "${{ inputs.size_mb }}" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys
+          s,e,mb = map(float, sys.argv[1:4])
+          sec = e-s
+          print(f"| push | ${{ matrix.endpoint }} | {int(mb)}MB | {sec:.1f}s | {mb/sec:.2f} MB/s |")
+          PY
+          tail -2 /tmp/push.log
+
+      - name: Timed pull
+        run: |
+          docker rmi "$TAG" >/dev/null 2>&1
+          S=$(date +%s.%N)
+          docker pull "$TAG" > /tmp/pull.log 2>&1 || { cat /tmp/pull.log; exit 1; }
+          E=$(date +%s.%N)
+          python3 - "$S" "$E" "${{ inputs.size_mb }}" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys
+          s,e,mb = map(float, sys.argv[1:4])
+          sec = e-s
+          print(f"| pull | ${{ matrix.endpoint }} | {int(mb)}MB | {sec:.1f}s | {mb/sec:.2f} MB/s |")
+          PY
