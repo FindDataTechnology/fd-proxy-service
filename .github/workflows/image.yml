@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  REGISTRY: ccr.ccs.tencentyun.com
+  REGISTRY: hkccr.ccs.tencentyun.com
   NAMESPACE: lawcraw-business
   IMAGE_NAME: fd-proxy-service
   DOCKERFILE: Dockerfile
