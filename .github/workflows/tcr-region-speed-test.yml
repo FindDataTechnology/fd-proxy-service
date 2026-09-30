@@ -31,7 +31,8 @@ jobs:
           mkdir -p /tmp/probe && cd /tmp/probe
           dd if=/dev/urandom of=speedtest.bin bs=1M count=${SIZE_MB} status=none
           printf 'FROM scratch\nCOPY speedtest.bin /speedtest.bin\n' > Dockerfile
-          echo "TAG=${{ matrix.endpoint }}/finddata/tcr-speed-probe:gh-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          TAG="${{ matrix.endpoint }}/finddata/tcr-speed-probe:gh-${GITHUB_RUN_NUMBER}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
           docker build -q -t "$TAG" .
 
       - name: Timed push
