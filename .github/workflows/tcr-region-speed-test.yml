@@ -20,6 +20,8 @@ jobs:
           - ccr.ccs.tencentyun.com
           - hkccr.ccs.tencentyun.com
           - uswccr.ccs.tencentyun.com
+    env:
+      SIZE_MB: ${{ inputs.size_mb || '500' }}
     steps:
       - name: Login ${{ matrix.endpoint }}
         run: echo '${{ secrets.TCR_PASSWORD }}' | docker login '${{ matrix.endpoint }}' -u '${{ secrets.TCR_USERNAME }}' --password-stdin
@@ -27,7 +29,7 @@ jobs:
       - name: Build test image
         run: |
           mkdir -p /tmp/probe && cd /tmp/probe
-          dd if=/dev/urandom of=speedtest.bin bs=1M count=${{ inputs.size_mb }} status=none
+          dd if=/dev/urandom of=speedtest.bin bs=1M count=${SIZE_MB} status=none
           printf 'FROM scratch\nCOPY speedtest.bin /speedtest.bin\n' > Dockerfile
           echo "TAG=${{ matrix.endpoint }}/finddata/tcr-speed-probe:gh-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           docker build -q -t "$TAG" .
@@ -37,7 +39,7 @@ jobs:
           S=$(date +%s.%N)
           docker push "$TAG" > /tmp/push.log 2>&1 || { cat /tmp/push.log; exit 1; }
           E=$(date +%s.%N)
-          python3 - "$S" "$E" "${{ inputs.size_mb }}" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - "$S" "$E" "$SIZE_MB" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import sys
           s,e,mb = map(float, sys.argv[1:4])
           sec = e-s
@@ -51,7 +53,7 @@ jobs:
           S=$(date +%s.%N)
           docker pull "$TAG" > /tmp/pull.log 2>&1 || { cat /tmp/pull.log; exit 1; }
           E=$(date +%s.%N)
-          python3 - "$S" "$E" "${{ inputs.size_mb }}" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - "$S" "$E" "$SIZE_MB" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import sys
           s,e,mb = map(float, sys.argv[1:4])
           sec = e-s
