@@ -1,5 +1,13 @@
 # One-shot migration + seed for fd-proxy-service (tasks 2.1 / 2.2 / 2.3 / 9.2).
 #
+# SHARED DATABASE: fd_open_data is co-owned with fd-open-data-mcp. This runner
+# may only touch fd-proxy-service's own objects (source_provider_routes; its
+# ban_rules/rate_limits/probes seeds) — never ALTER `proxies` (schema-owned by
+# the MCP service's Alembic chain). The MCP migrator serializes on
+# pg_advisory_lock(hashtext('fd_mcp_schema_migrate')); this runner should take
+# the same lock before executing SQL. Ownership map & rules:
+#   fd-open-data-mcp/docs/shared-database-ownership.md
+#
 # Breaks the chicken-and-egg where proxy-control's /health probe queries
 # `proxies.provider` (added by this migration) before the column exists. The
 # Job reads PROXY_DATABASE_URL from the same master-db-secret the control plane
