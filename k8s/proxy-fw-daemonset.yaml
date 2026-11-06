@@ -1,0 +1,95 @@
+# proxy-fw — per-node egress forwarder, DaemonSet form (live source of truth).
+#
+# Supersedes the historical Deployment/Job forms in this directory (those pin the
+# retired Harbor registry 100.64.0.8:30880 and are no longer applied). This is the
+# shape actually running in namespace `scraw`: hostNetwork, binds :8080 on every
+# node so in-cluster crawlers reach the forwarder at <node-ip>:8080.
+#
+# Liveness note (2026-11-07): timeoutSeconds was raised 1 -> 5 and
+# failureThreshold 3 -> 5 after the 1s/3x probe killed healthy pods under CPU
+# throttling (89-122 clean-exit restarts per node over 27 days, exit code 0).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations: {}
+  labels:
+    app: proxy-fw
+  name: proxy-fw
+  namespace: scraw
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: proxy-fw
+  template:
+    metadata:
+      labels:
+        app: proxy-fw
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: NotIn
+                values:
+                - liuliangth1zdmvyyvr0
+                - liuliangdmh1xr0w9ryu
+      containers:
+      - command:
+        - proxy-fw
+        env:
+        - name: PROXY_REDIS_URL
+          value: redis://:MsDYShC3gRgx9lrEY3uO8PJu@100.64.0.3:30380/1
+        - name: PROXY_DATABASE_URL
+          value: postgresql+psycopg2://fd:vxlA5dhoRUEG5bxchpqEIozNZr8z@100.64.0.3:30432/fd_open_data
+        - name: FD_EGRESS_AUTH
+          value: fdproxy:GostEgress2026x9k
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        - name: PROXY_FW_HOST
+          value: 0.0.0.0
+        - name: PROXY_FW_PORT
+          value: '8080'
+        image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:panel-ops
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: proxy-fw
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      hostNetwork: true
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
