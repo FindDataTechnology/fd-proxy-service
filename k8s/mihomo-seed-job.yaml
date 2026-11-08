@@ -1,20 +1,23 @@
 # One-shot seed for the mihomo fixed-exit pool (tasks 3.2 / 3.3).
 #
-# Registers the usable listeners on xinru-server2 (100.64.0.7:3008x) as the
-# `mihomo` pool provider. Unlike `proxy-migrate`, this Job does LIVE egress
-# probes: every listener is dialled through and asked for its exit IP, because
-# the carousel reassigns ports to nodes over time — a snapshot taken days ago is
-# not evidence (2026-09-12's 161.114.12.26 no longer exists). The measured exit
-# IP becomes the circuit unit, so the ~23 listeners behind one IP trip as a
-# group instead of burning ~23 attempts.
+# Registers the usable listeners on windows-laptop (100.64.0.10:31081-31115) as
+# the `mihomo` pool provider. The old xinru-server2 pool (100.64.0.7:3008x) is
+# retired — do not point this back at it. Unlike `proxy-migrate`, this Job does
+# LIVE egress probes: every listener is dialled through and asked for its exit
+# IP, because the carousel reassigns ports to nodes over time — a snapshot taken
+# days ago is not evidence (2026-09-12's 161.114.12.26 no longer exists). The
+# measured exit IP becomes the circuit unit, so every listener behind one IP
+# trips as a group instead of burning one attempt per port.
 #
 # A listener is retried before being written off: the first (cold) connect can
-# exceed the 8s probe timeout while later ones answer in ~2s. Only a listener
-# that stays unreachable is registered `retired` and kept out of the pool.
+# exceed the probe timeout while later ones answer in ~2s. Only a listener that
+# stays unreachable is registered `retired` and kept out of the pool. A port that
+# flaps can still be retired by a slow run — re-run the Job after checking it by
+# hand (curl -x http://<user>:<pass>@100.64.0.10:<port> https://api.ipify.org).
 #
 # Credentials never enter git. Create the Secret out-of-band, then run the Job:
 #   kubectl -n scraw create secret generic mihomo-creds \
-#     --from-file=proxy-creds.json="$HOME/.finddata/proxy-creds.json"
+#     --from-file=proxy-creds.json="$HOME/.finddata/mihomo-win-creds.json"
 #   kubectl -n scraw delete job mihomo-seed --ignore-not-found
 #   kubectl -n scraw apply -f k8s/mihomo-seed-job.yaml
 #   kubectl -n scraw logs job/mihomo-seed

@@ -47,16 +47,26 @@ _REGISTRY: list[tuple] = [
     # PoolProvider directly (no loopback-rewrite — mesh IPs are directly
     # reachable, unlike gost-own's 127.0.0.1 which needs node-IP rewrite).
     (lambda session: PoolProvider("gost-mesh", session, priority=1), 1),
-    # mihomo: the fixed-exit international pool on xinru-server2 (27 ports over
-    # 3 exit IPs), reached over Tailscale. Priority 2 — tried once both gost
-    # tiers are circuit-exhausted, and the *first* choice for any source with a
-    # route row naming it, since CN egresses are what international sources ban.
+    # mihomo: the fixed-exit international pool on windows-laptop
+    # (100.64.0.10:31081-31115, 24 live ports over 7 exit IPs), reached over
+    # Tailscale. Priority 2 — tried once both gost tiers are circuit-exhausted,
+    # and the *first* choice for any source with a route row naming it, since CN
+    # egresses are what international sources ban. The provider name is exactly
+    # ``mihomo``: a route naming anything else (e.g. the historical
+    # ``mihomo-win``) is skipped as unregistered and the source silently falls
+    # back to direct egress.
     (lambda session: MihomoProvider(session), 2),
     # paid-static: externally purchased static endpoints (panel-ops-console),
     # imported via the management API as provider-managed ``proxies`` rows.
     # Priority 3 — tried once every free tier is circuit-exhausted, so paid
     # bandwidth is only spent when nothing else works.
     (lambda session: PoolProvider("paid-static", session, priority=3), 3),
+    # mihomo-cn: 国内住宅出口（windows-laptop 的 mihomo 深圳家宽节点，
+    # 100.64.0.10:7890，实测出口 163.125.162.244 / 广东深圳联通）。
+    # Priority 4 —— 排在付费档之后，**不承担默认阶梯**：国内源本来就直连优先，
+    # 海外源也绝不能被国内住宅 IP 接管。正常用法是被 `source_provider_routes`
+    # 点名（挡云机房 IP 的国内站用它换住宅出口）。
+    (lambda session: PoolProvider("mihomo-cn", session, priority=4), 4),
     # External ``endpoint`` providers (paid rotating APIs, tor) are appended
     # here at a higher priority so gost-own/gost-mesh are preferred when
     # healthy. They are only tried once both are exhausted — the decoupled-IP

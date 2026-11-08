@@ -65,7 +65,8 @@ def test_registers_reachable_listeners_and_skips_fx02(session):
 def test_registers_the_tailscale_address_and_port(session):
     seed.seed_mihomo(session, creds=CREDS, node_map=NODES, prober=_prober)
     row = _by_label(session)["mihomo-fx01"]
-    assert (row.scheme, row.ip, row.port) == ("http", "100.64.0.7", 30081)
+    assert (row.scheme, row.ip, row.port) == ("http", seed.MIHOMO_HOST, 30081)
+    assert seed.MIHOMO_HOST == "100.64.0.10"  # windows-laptop; 100.64.0.7 is retired
     assert row.provider == "mihomo"
 
 
@@ -242,10 +243,12 @@ def test_probe_gives_up_after_every_attempt(monkeypatch):
 
 # ─── the real credential asset (skipped when absent, e.g. in CI) ───────────
 
-def test_real_creds_asset_parses_to_the_28_listeners():
-    p = pathlib.Path.home() / ".finddata" / "proxy-creds.json"
+def test_real_creds_asset_parses_to_the_35_windows_listeners():
+    # The live pool moved to windows-laptop on 2026-11-08 (31081-31115); the old
+    # xinru-server2 asset (~/.finddata/proxy-creds.json, 30081-30108) is retired.
+    p = pathlib.Path.home() / ".finddata" / "mihomo-win-creds.json"
     if not p.is_file():
-        pytest.skip("no local mihomo credential file")
+        pytest.skip("no local windows mihomo credential file")
     creds = seed.load_mihomo_creds(str(p))
-    assert [c["port"] for c in creds] == list(range(30081, 30109))  # fx01..fx28
+    assert [c["port"] for c in creds] == list(range(31081, 31116))  # 35 listeners
     assert all(c["auth"].count(":") == 1 for c in creds)

@@ -51,7 +51,8 @@ def get_rate_limit(session: Session, source: str) -> Optional[SourceRateLimit]:
 # A circuit is keyed by (source, unit). The unit is what a ban actually
 # invalidates: for most providers one address = one egress IP, so the unit is
 # the address itself. But a pool can front several addresses through ONE egress
-# IP (the mihomo pool: 24 of its 28 ports exit via 38.76.150.159). Keying those
+# IP (the mihomo pool: measured 2026-11-08, its 24 live listeners leave through
+# 7 IPs, the busiest carrying 6). Keying those
 # per-address would make a single ban cost ~24 wasted attempts before the pool
 # is exhausted; keying by the exit IP takes the group out on the first ban.
 #

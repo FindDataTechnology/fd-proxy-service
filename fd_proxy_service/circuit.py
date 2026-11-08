@@ -3,8 +3,9 @@
 Hot state lives in Redis (hash at ``circuit:{source}:{unit}``) so all crawl
 pods share it with sub-ms reads. The **unit** is the granularity the circuit
 keys on: for a provider that declares a shared egress IP
-(``provider_meta.exit_ip`` — e.g. the mihomo pool, where 24 of 28 ports exit
-through one IP) it is that IP, so a ban takes the whole group out at once
+(``provider_meta.exit_ip`` — e.g. the mihomo pool, where the 24 live listeners
+exit through 7 IPs and the busiest carries 6) it is that IP, so a ban takes the
+whole group out at once
 instead of burning one attempt per port. Otherwise it is ``str(proxies.id)`` —
 the pre-group scheme, byte for byte, so existing per-address circuit state
 survives the upgrade (``pool.circuit_unit`` / ``pool.unit_for_proxy_id``

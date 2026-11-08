@@ -367,13 +367,18 @@ def seed_gost_mesh(session: Session) -> dict[str, str]:
 
 
 # ─── mihomo provider (fixed-exit international pool) ─────────────────────────
-# The pool is an external asset on xinru-server2 (see INFRA-NOTES.md): 28
-# "mixed" (HTTP+SOCKS) listeners on the Tailscale address, each pinned to one
-# airport node, one Basic-auth credential per listener. This seed probes every
-# listener for its real egress IP and registers it.
+# The pool is an external asset on windows-laptop (tailnet 100.64.0.10, LAN
+# 192.168.1.3 — see docs/proxy-mihomo-windows-migration.md): 35 "mixed"
+# (HTTP+SOCKS) listeners on 31081-31115, each pinned to one airport node, one
+# Basic-auth credential per listener. This seed probes every listener for its
+# real egress IP and registers it.
+#
+# The 2026-10 pool on xinru-server2 (100.64.0.7:3008x) is retired: its rows stay
+# in the table as status='retired' for history and must not be re-seeded.
 MIHOMO_NAME = "mihomo"
-MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "100.64.0.7")
-MIHOMO_CREDS_FILE = os.environ.get("MIHOMO_CREDS_FILE", "~/.finddata/proxy-creds.json")
+MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "100.64.0.10")
+MIHOMO_CREDS_FILE = os.environ.get(
+    "MIHOMO_CREDS_FILE", "~/.finddata/mihomo-win-creds.json")
 MIHOMO_NODE_MAP_FILE = os.environ.get(
     "MIHOMO_NODE_MAP_FILE", "~/.finddata/mihomo-port-mapping.txt")
 MIHOMO_EXIT_PROBE_URL = os.environ.get("MIHOMO_EXIT_PROBE_URL", "https://api.ipify.org")
@@ -385,10 +390,11 @@ MIHOMO_EXIT_PROBE_TIMEOUT = float(os.environ.get("MIHOMO_EXIT_PROBE_TIMEOUT", "8
 # and retiring a healthy port contradicts the pool's expected size.
 MIHOMO_EXIT_PROBE_ATTEMPTS = int(os.environ.get("MIHOMO_EXIT_PROBE_ATTEMPTS", "2"))
 
-# fx02@30082 is dead and is deliberately NOT repaired: fixing it means editing
-# the server config and reloading, which would drop the sub2api connections
-# sharing that host. 27 ports is plenty, and a known-dead listener in the pool
-# would only be one more thing to circuit-break.
+# fx02@30082 is dead on the RETIRED xinru-server2 pool and is deliberately NOT
+# repaired: fixing it means editing that host's config and reloading, which would
+# drop the sub2api connections sharing it. The port does not exist on the current
+# windows pool (31081-31115), so this skip is a no-op there — kept so a re-seed
+# against the old host stays safe.
 MIHOMO_SKIP_PORTS = {30082}
 
 # Sources that must reach a foreign exit directly rather than warm up through CN

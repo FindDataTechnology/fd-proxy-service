@@ -92,11 +92,13 @@ rather than sibling-server NodePorts.
 
 ### The `mihomo` fixed-exit pool
 
-A pool of 27 mixed listeners on `100.64.0.7:30081-30108` (xinru-server2 over
-Tailscale), each pinned to one airport node, each with its own Basic auth. It is
-the only reliable international egress for the fleet, registered as `mihomo`
-(priority 2 — after both gost providers, before paid-static). fx02/30082 is dead
-and permanently skipped.
+A pool of 35 mixed listeners on `100.64.0.10:31081-31115` (windows-laptop over
+Tailscale; LAN side `192.168.1.3`), each pinned to one airport node, each with
+its own Basic auth. It is the only reliable international egress for the fleet,
+registered as `mihomo` (priority 2 — after both gost providers, before
+paid-static). The old xinru-server2 pool (`100.64.0.7:3008x`, 27 rows) is
+retired and kept in the table for history only — see
+`docs/proxy-mihomo-windows-migration.md`.
 
 The pool is **measured, not copied**: the airport reassigns ports to nodes, so a
 snapshot from days ago is already wrong. `seed-mihomo` dials every listener
@@ -105,19 +107,22 @@ through and records the exit IP it actually reports:
 ```bash
 # credentials come from a Secret, never from the repo
 kubectl -n scraw create secret generic mihomo-creds \
-  --from-file=proxy-creds.json="$HOME/.finddata/proxy-creds.json"
+  --from-file=proxy-creds.json="$HOME/.finddata/mihomo-win-creds.json"
 kubectl -n scraw apply -f k8s/mihomo-seed-job.yaml     # runs `fd-proxy-service seed-mihomo`
 kubectl -n scraw logs job/mihomo-seed
 ```
 
 A listener that stays unreachable across the retries (`MIHOMO_EXIT_PROBE_ATTEMPTS`,
-default 2 — a cold first connect can outlast the 8s probe timeout) is registered
+default 2 — a cold first connect can outlast the probe timeout) is registered
 `retired` rather than active. Re-running is idempotent: an unchanged pool reports
-zeros and writes nothing.
+zeros and writes nothing. Operationally: when the listener count drops far below
+the 35 registered, re-run the seed to refresh exit IPs and retire dead ports.
 
-Those measured exit IPs are what the grouped circuit keys on — 23 of the 26
-active listeners leave through a single IP, so one ban trips the group instead of
-being re-discovered 23 times. See `docs/SOURCE_PROXY_HEALTH.md` for the grouped
+Those measured exit IPs are what the grouped circuit keys on. The listeners do
+**not** each own an exit IP — measured 2026-11-08, 24 live listeners leave
+through 7 IPs, the busiest carrying 6 of them (and 11 ports point at nodes that
+are currently dead). So one ban trips a group of up to 6 instead of being
+re-discovered port by port. See `docs/SOURCE_PROXY_HEALTH.md` for the grouped
 circuit, per-source routing, and address-wide concurrency cap semantics.
 
 ## Install
