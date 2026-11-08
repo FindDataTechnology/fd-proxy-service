@@ -28,7 +28,7 @@ spec:
       - name: fd-harbor-pull
       containers:
       - name: proxy-control
-        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
+        image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:sha-ad65424
         # One image, two entrypoints — the control plane selects `proxy-control`.
         command: ["proxy-control"]
         ports: [{containerPort: 8000}]
