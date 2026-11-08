@@ -20,6 +20,7 @@ they need. See ``design.md`` (Open Questions) for the forwarder-shape decision.
 """
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Optional
 
@@ -87,8 +88,22 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title="fd-proxy-service control", version="0.1.0")
 
+    # Shared token for every credential-returning / mutating route (/acquire,
+    # /release and /management/*). Fail closed: an unset MANAGEMENT_TOKEN
+    # refuses the request instead of skipping the check — the control API is
+    # published on a NodePort and /acquire hands out authenticated proxy URLs.
+    def _require_token(supplied: Optional[str], unconfigured_status: int = 503) -> None:
+        expected = os.environ.get("MANAGEMENT_TOKEN")
+        if not expected:
+            raise HTTPException(status_code=unconfigured_status,
+                                detail="MANAGEMENT_TOKEN is not configured")
+        if not supplied or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail="invalid management token")
+
     @app.post("/acquire", response_model=AcquisitionResponse)
-    def acquire(req: AcquireRequest, session: Session = Depends(session_dep)) -> AcquisitionResponse:
+    def acquire(req: AcquireRequest, session: Session = Depends(session_dep),
+                x_management_token: Optional[str] = Header(default=None)) -> AcquisitionResponse:
+        _require_token(x_management_token, 401)
         acq = acquire_any(req.source, session, exclude=req.exclude)
         if acq is None:
             # Ships-dark: no healthy upstream. Caller egresses direct.
@@ -100,7 +115,9 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/release")
-    def rel(req: ReleaseRequest, session: Session = Depends(session_dep)) -> dict:
+    def rel(req: ReleaseRequest, session: Session = Depends(session_dep),
+            x_management_token: Optional[str] = Header(default=None)) -> dict:
+        _require_token(x_management_token, 401)
         release(req.source, req.addr_id, req.outcome, req.provider, session)
         return {"ok": True}
 
@@ -139,13 +156,11 @@ def create_app() -> FastAPI:
         return circuit.all_circuits()
 
     # ── management endpoints (panel-ops-console) ─────────────────────────────
-    # Mutating operations behind an optional MANAGEMENT_TOKEN (checked when
-    # set) — /acquire stays tokenless like today, management is new surface
-    # and the control API is exposed on a NodePort.
+    # Management surface is new (panel-ops-console) and the control API is
+    # exposed on a NodePort; the guard is fail-closed (503 when the shared
+    # token is unset) and uses the same constant-time compare as /acquire.
     def _mgmt_guard(management_token: Optional[str]) -> None:
-        expected = os.environ.get("MANAGEMENT_TOKEN")
-        if expected and management_token != expected:
-            raise HTTPException(status_code=401, detail="invalid management token")
+        _require_token(management_token)
 
     @app.post("/management/proxies/import")
     def import_proxies(

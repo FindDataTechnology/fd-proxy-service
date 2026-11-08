@@ -19,6 +19,8 @@ from fd_proxy_service import db as dbmod
 from fd_proxy_service.control.app import create_app
 from fd_proxy_service.models import Base
 
+TEST_MANAGEMENT_TOKEN = "test-management-token"
+
 
 class _FakeRedis:
     """Minimal in-memory Redis for the circuit + rate-limit callsites.
@@ -133,7 +135,10 @@ def fake_redis(monkeypatch):
 
 @pytest.fixture
 def client(engine, monkeypatch):
-    """Control-plane app wired to the test DB via dependency override."""
+    """Control-plane app wired to the test DB via dependency override.
+
+    The shared-token guard is fail-closed, so the fixture configures a token and
+    sends it by default; tests that exercise the gate override either side."""
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     def _override():
@@ -145,6 +150,6 @@ def client(engine, monkeypatch):
 
     app = create_app()
     app.dependency_overrides[dbmod.session_dep] = _override
-    monkeypatch.delenv("MANAGEMENT_TOKEN", raising=False)
-    with TestClient(app) as c:
+    monkeypatch.setenv("MANAGEMENT_TOKEN", TEST_MANAGEMENT_TOKEN)
+    with TestClient(app, headers={"X-Management-Token": TEST_MANAGEMENT_TOKEN}) as c:
         yield c

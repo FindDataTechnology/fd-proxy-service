@@ -176,3 +176,25 @@ def test_management_token_enforced(client, monkeypatch):
     ok = client.get("/management/rate-limits",
                     headers={"X-Management-Token": "sekrit"})
     assert ok.status_code == 200
+
+
+def test_management_token_unset_fails_closed(client, monkeypatch):
+    monkeypatch.delenv("MANAGEMENT_TOKEN", raising=False)
+    assert client.get("/management/rate-limits").status_code == 503
+    assert client.post("/management/proxies/import",
+                       json={"text": THREE}).status_code == 503
+
+
+def test_acquire_release_require_token(client, monkeypatch):
+    # unset: fail closed on the credential-returning routes too
+    monkeypatch.delenv("MANAGEMENT_TOKEN", raising=False)
+    assert client.post("/acquire", json={"source": "src"}).status_code == 401
+    assert client.post("/release",
+                       json={"source": "src", "outcome": "ok"}).status_code == 401
+    # set: wrong token 401, correct token 200
+    monkeypatch.setenv("MANAGEMENT_TOKEN", "sekrit")
+    assert client.post("/acquire", json={"source": "src"}).status_code == 401
+    ok = {"X-Management-Token": "sekrit"}
+    assert client.post("/acquire", json={"source": "src"}, headers=ok).status_code == 200
+    assert client.post("/release", json={"source": "src", "outcome": "ok"},
+                       headers=ok).status_code == 200
