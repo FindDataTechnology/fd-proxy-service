@@ -40,10 +40,22 @@ spec:
       - command:
         - proxy-fw
         env:
+        # Credentials come from the Secret, never a literal: the 2026-11-08
+        # rotation invalidated the password baked into this file, which would
+        # have broken every forwarder on the next apply. PROXY_REDIS_URL_CONTROL
+        # is db/1 (circuit state) — the crawler-facing REDIS_URL in the same
+        # secret is db/0, and pointing the forwarder at it would move the
+        # circuits into the wrong keyspace.
         - name: PROXY_REDIS_URL
-          value: redis://:MsDYShC3gRgx9lrEY3uO8PJu@100.64.0.3:30380/1
+          valueFrom:
+            secretKeyRef:
+              name: fd-db-secret
+              key: PROXY_REDIS_URL_CONTROL
         - name: PROXY_DATABASE_URL
-          value: postgresql+psycopg2://fd:vxlA5dhoRUEG5bxchpqEIozNZr8z@100.64.0.3:30432/fd_open_data
+          valueFrom:
+            secretKeyRef:
+              name: fd-db-secret
+              key: DATABASE_URL
         - name: FD_EGRESS_AUTH
           value: fdproxy:GostEgress2026x9k
         - name: K8S_NODE_IP
