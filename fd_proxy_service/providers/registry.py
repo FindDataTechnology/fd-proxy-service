@@ -63,9 +63,12 @@ _REGISTRY: list[tuple] = [
     (lambda session: PoolProvider("paid-static", session, priority=3), 3),
     # mihomo-cn: 国内住宅出口（windows-laptop 的 mihomo 深圳家宽节点，
     # 100.64.0.10:7890，实测出口 163.125.162.244 / 广东深圳联通）。
-    # Priority 4 —— 排在付费档之后，**不承担默认阶梯**：国内源本来就直连优先，
-    # 海外源也绝不能被国内住宅 IP 接管。正常用法是被 `source_provider_routes`
-    # 点名（挡云机房 IP 的国内站用它换住宅出口）。
+    # Priority 4 —— 它**确实在全局阶梯里**（本表即阶梯），只是排在付费档之后：
+    # 只有 gost-own/gost-mesh/mihomo/paid-static 全部 OPEN 或饱和时，未点名的源
+    # 才会落到这里兜底。那台盒子 3Mbps 上行与 sub2api 长连接共用，所以 addresses
+    # 行上钉了 max_concurrency=2（见 docs/proxy-mihomo-windows-migration.md 第 6 条）。
+    # 常规用法仍是被 `source_provider_routes` 点名（挡云机房 IP 的国内站换住宅出口）；
+    # 海外源绝不该被国内住宅 IP 接管，所以给海外源配路由时不要把它写进列表。
     (lambda session: PoolProvider("mihomo-cn", session, priority=4), 4),
     # External ``endpoint`` providers (paid rotating APIs, tor) are appended
     # here at a higher priority so gost-own/gost-mesh are preferred when
