@@ -39,14 +39,18 @@ spec:
       - name: fd-harbor-pull
       containers:
       - name: mihomo-seed
-        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
+        image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:sha-ad65424
         command: ["fd-proxy-service", "seed-mihomo"]
         env:
         # Canonical DB (guangzhou-xinru fd-postgres :30432 over mesh) — same
         # secret the control plane reads.
         - name: PROXY_DATABASE_URL
           valueFrom: {secretKeyRef: {name: fd-db-secret, key: DATABASE_URL}}
+        # The Secret must hold the CURRENT pool's 35 listeners (31081-31115).
+        # Mounting the retired 3008x asset here would probe old ports against
+        # the new host and register 29 retired rows.
         - {name: MIHOMO_CREDS_FILE, value: /etc/mihomo/proxy-creds.json}
+        - {name: MIHOMO_HOST, value: "100.64.0.10"}
         volumeMounts:
         - {name: creds, mountPath: /etc/mihomo, readOnly: true}
         resources:

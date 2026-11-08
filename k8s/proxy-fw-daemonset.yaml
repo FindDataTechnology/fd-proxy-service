@@ -55,7 +55,7 @@ spec:
           value: 0.0.0.0
         - name: PROXY_FW_PORT
           value: '8080'
-        image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:panel-ops
+        image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:sha-ad65424
         imagePullPolicy: IfNotPresent
         livenessProbe:
           failureThreshold: 5
