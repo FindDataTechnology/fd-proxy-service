@@ -33,8 +33,11 @@ spec:
         - name: PROXY_DATABASE_URL
           valueFrom: {secretKeyRef: {name: master-db-secret, key: DATABASE_URL}}
         - name: FD_EGRESS_AUTH
+          # `optional: true` 已去掉：2026-11-09 起 secret `egress-auth` 在 scraw
+          # 命名空间真实存在。保留 optional 只会让"secret 被删/改名"时静默取到空值，
+          # 而空值会让 gost 侧认证 407、且错误发生在运行时而不是调度期。
           valueFrom:
-            secretKeyRef: {name: egress-auth, key: FD_EGRESS_AUTH, optional: true}
+            secretKeyRef: {name: egress-auth, key: FD_EGRESS_AUTH}
         - {name: PROXY_FW_HOST, value: "0.0.0.0"}
         - {name: PROXY_FW_PORT, value: "8080"}
         readinessProbe: {httpGet: {path: /health, port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}

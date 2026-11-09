@@ -56,8 +56,16 @@ spec:
             secretKeyRef:
               name: fd-db-secret
               key: DATABASE_URL
+        # gost 出口代理的 basic-auth：**不再是明文**。2026-11-09 轮换并改走 secret
+        # （`egress-auth/FD_EGRESS_AUTH`，scraw 命名空间，两个集群各一份）。
+        # 在此之前这枚值直接写在这里，且与 gost 的 `-L` 逐字符相同——即"现役有效
+        # 凭据躺在仓库里"。注意 gost 侧同样已改成 `sh -c 'exec gost -L http://$FD_EGRESS_AUTH@:30080'`
+        # 从同一个 secret 取值，两侧必须一起改，否则 407。
         - name: FD_EGRESS_AUTH
-          value: fdproxy:GostEgress2026x9k
+          valueFrom:
+            secretKeyRef:
+              name: egress-auth
+              key: FD_EGRESS_AUTH
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
