@@ -42,6 +42,12 @@ spec:
           valueFrom: {secretKeyRef: {name: fd-db-secret, key: DATABASE_URL}}
         - {name: PROXY_CONTROL_HOST, value: "0.0.0.0"}
         - {name: PROXY_CONTROL_PORT, value: "8000"}
+        # 控制面共享令牌（fail-closed）：未配置时 /management/* 一律 503、/acquire
+        # 与 /release 401。Secret 由集群侧一次性创建（键只增不删），本清单不承载值。
+        # 调用方读同名值的 PROXY_CONTROL_TOKEN（fd-open-data-mcp/.../proxy/injection.py、
+        # fd-data-quality/scripts/_nbs_client.py）。
+        - name: MANAGEMENT_TOKEN
+          valueFrom: {secretKeyRef: {name: proxy-control-token, key: MANAGEMENT_TOKEN}}
         readinessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 5, periodSeconds: 10}
         livenessProbe:  {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 15, periodSeconds: 20}
         resources:
