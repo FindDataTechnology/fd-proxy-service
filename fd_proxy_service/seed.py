@@ -404,6 +404,14 @@ MIHOMO_SKIP_PORTS = {30082}
 # they onboard.
 MIHOMO_SOURCE_ROUTES: dict[str, list[str]] = {
     "fred": [MIHOMO_NAME],
+    # wbgapi (World Bank API) — 2026-11-10: three of its four circuits were OPEN
+    # while the source itself was fine. The default ladder handed it domestic
+    # gost-mesh exits (100.64.0.4/.7/.14); worldbank bans those, so every fetch
+    # spent the egress and left the circuit closed to nobody. Measured the same
+    # minute: direct egress from a cheap node = 200, via mihomo-kr01
+    # (100.64.0.10:31113) = 200 in 0.30s. International source → pin it to the
+    # foreign pool like fred, instead of burning CN IPs on bans.
+    "wbgapi": [MIHOMO_NAME],
 }
 
 
