@@ -323,11 +323,20 @@ def seed_gost_own(session: Session) -> dict[str, str]:
 #
 # Same ``FD_EGRESS_AUTH`` as gost-own: all gost instances share one basic-auth
 # credential (per-row override available via ``auth`` in the address dict).
-GOST_MESH_ADDRESSES: list[dict] = [
-    {"scheme": "http", "ip": "100.64.0.1", "port": 30080, "label": "gost-mesh-chengsi"},
-    {"scheme": "http", "ip": "100.64.0.2", "port": 30080, "label": "gost-mesh-aliyun"},
-    {"scheme": "http", "ip": "100.64.0.4", "port": 30080, "label": "gost-mesh-zihan"},
-]
+#: Deployment-specific, supplied by the ``GOST_MESH_ADDRESSES`` env as a JSON list
+#: (each item either ``"host:port"`` or an address object). Deliberately empty here.
+#:
+#: Why not a default: the address set *is* the fleet map — how many machines carry an
+#: egress listener, and their private addresses. A hardcoded list in a public repo is a
+#: description of the network, and it also silently hands a fresh deployment someone
+#: else's egress endpoints.
+#:
+#: Behaviour change, stated plainly: seeding with this unset registers no gost-mesh
+#: provider, so proxy routing skips that tier. Existing rows are untouched (seed is an
+#: idempotent upsert), so a pool seeded before this change keeps working. A deployment
+#: that wants the tier must set the env — which is the point: it should say so out loud
+#: rather than inherit defaults.
+GOST_MESH_ADDRESSES: list[dict] = []
 
 
 def _parse_mesh_override(raw: str) -> list[dict]:
@@ -355,7 +364,7 @@ def seed_gost_mesh(session: Session) -> dict[str, str]:
 
     Reads the gost basic-auth from ``FD_EGRESS_AUTH`` (same shared credential
     as gost-own — all gost instances share one basic-auth) and the address set
-    from the ``GOST_MESH_ADDRESSES`` env (JSON list or ``host:port`` CSV)
+    from the ``GOST_MESH_ADDRESSES`` env (JSON list; items may be ``"host:port"``)
     overriding the default ``GOST_MESH_ADDRESSES`` above. Idempotent upsert by
     ``provider='gost-mesh'``+``label``. Call after deploying gost on each target
     server so the endpoints answer; re-run after adding a server to refresh.
