@@ -385,7 +385,9 @@ def seed_gost_mesh(session: Session) -> dict[str, str]:
 # The 2026-10 pool on the db host-server2 (<node>:3008x) is retired: its rows stay
 # in the table as status='retired' for history and must not be re-seeded.
 MIHOMO_NAME = "mihomo"
-MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "<pool-host>")
+#: No default. The pool lives on one host in one deployment; a literal here would both
+#: publish the address and make `seed-mihomo` dial a hostname that cannot resolve.
+MIHOMO_HOST = os.environ.get("MIHOMO_HOST")
 MIHOMO_CREDS_FILE = os.environ.get(
     "MIHOMO_CREDS_FILE", "~/.finddata/mihomo-win-creds.json")
 MIHOMO_NODE_MAP_FILE = os.environ.get(
@@ -567,6 +569,8 @@ def seed_mihomo(
     ``creds`` / ``node_map`` / ``prober`` are injectable, so this is testable
     without the network or the credential file.
     """
+    if not MIHOMO_HOST:
+        raise RuntimeError("MIHOMO_HOST must be set (the pool's host; no default)")
     creds = load_mihomo_creds() if creds is None else creds
     nodes = load_node_map() if node_map is None else node_map
     prober = probe_exit_ip if prober is None else prober
