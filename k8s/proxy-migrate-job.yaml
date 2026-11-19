@@ -39,7 +39,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: proxy-migrate
-        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
+        image: ccr.ccs.tencentyun.com/finddata/fd-proxy-service:sha-1a1689d
         command: ["python", "-c"]
         args:
         - |
@@ -76,4 +76,8 @@ spec:
         # gost-mesh 出口地址集。源码里已无默认值（地址集等于机队地图，且不该由公开仓
         # 替任何部署选好出口），所以这个 Job 必须显式给。改了这里要重跑本 Job 才生效。
         - name: GOST_MESH_ADDRESSES
-          value: '["100.64.0.1:30080","100.64.0.2:30080","100.64.0.4:30080"]' 
+          valueFrom:
+            secretKeyRef:
+              name: fd-proxy-mesh-addresses
+              key: addresses
+              optional: true

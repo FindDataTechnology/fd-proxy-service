@@ -1,15 +1,15 @@
 # Control plane for fd-proxy-service (the `proxy-control` server).
 #
-# Runs on the CONTROL cluster (guangzhou-xinru k3s, ns scraw); admin kubeconfig
+# Runs on the CONTROL cluster (guangzhou-the db host k3s, ns scraw); admin kubeconfig
 # can run Deployments (worker `crawl-worker` SA can create Jobs, not
 # Deployments). Owns the provider
-# registry (reads the `proxies` table from the canonical xinru DB) + serves the
+# registry (reads the `proxies` table from the canonical the db host DB) + serves the
 # acquire/release/health/providers/circuits HTTP API on NodePort 30090
 # (30000-32767 NodePorts MUST avoid the host-docker ports 30432/30380).
 #
 # The forwarder on each worker reuses the SAME app code (forwarder/server.py);
-# both point PROXY_REDIS_URL at the canonical fd-redis on guangzhou-xinru
-# (mesh 100.64.0.3:30380 db1) — control via fd-db-secret, forwarder via plain
+# both point PROXY_REDIS_URL at the canonical fd-redis on guangzhou-the db host
+# (mesh <db-host>:30380 db1) — control via fd-db-secret, forwarder via plain
 # env (worker SA cannot create Secrets).
 ---
 apiVersion: apps/v1
@@ -33,11 +33,11 @@ spec:
         command: ["proxy-control"]
         ports: [{containerPort: 8000}]
         env:
-        # Circuit-state Redis: canonical fd-redis on guangzhou-xinru, db 1
-        # (mesh 100.64.0.3:30380; password-protected host-docker instance).
+        # Circuit-state Redis: canonical fd-redis on guangzhou-the db host, db 1
+        # (mesh <db-host>:30380; password-protected host-docker instance).
         - name: PROXY_REDIS_URL
           valueFrom: {secretKeyRef: {name: fd-db-secret, key: PROXY_REDIS_URL_CONTROL}}
-        # Canonical DB URL (guangzhou-xinru fd-postgres :30432 over mesh).
+        # Canonical DB URL (guangzhou-the db host fd-postgres :30432 over mesh).
         - name: PROXY_DATABASE_URL
           valueFrom: {secretKeyRef: {name: fd-db-secret, key: DATABASE_URL}}
         - {name: PROXY_CONTROL_HOST, value: "0.0.0.0"}

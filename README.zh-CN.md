@@ -91,7 +91,7 @@ pip install fd-proxy-service
 
 ```bash
 export PROXY_REDIS_URL=redis://...@<proxy-redis-host>:30381/0
-export DATABASE_URL=postgresql://...@guangzhou-xinru:30432/fd_open_data
+export DATABASE_URL=postgresql://...@guangzhou-the db host:30432/fd_open_data
 fd-proxy-service migrate     # 增量：加 provider + provider_meta 列
 fd-proxy-service seed       # 注册 gost-own + 其 localhost:30080 地址
 proxy-control               # 在 :8000 提供控制 API（NodePort 30090）

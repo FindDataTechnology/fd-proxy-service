@@ -1,7 +1,7 @@
 # One-shot seed for the mihomo fixed-exit pool (tasks 3.2 / 3.3).
 #
-# Registers the usable listeners on windows-laptop (100.64.0.10:31081-31115) as
-# the `mihomo` pool provider. The old xinru-server2 pool (100.64.0.7:3008x) is
+# Registers the usable listeners on windows-laptop (<pool-host>:31081-31115) as
+# the `mihomo` pool provider. The old the db host-server2 pool (<node>:3008x) is
 # retired — do not point this back at it. Unlike `proxy-migrate`, this Job does
 # LIVE egress probes: every listener is dialled through and asked for its exit
 # IP, because the carousel reassigns ports to nodes over time — a snapshot taken
@@ -13,7 +13,7 @@
 # exceed the probe timeout while later ones answer in ~2s. Only a listener that
 # stays unreachable is registered `retired` and kept out of the pool. A port that
 # flaps can still be retired by a slow run — re-run the Job after checking it by
-# hand (curl -x http://<user>:<pass>@100.64.0.10:<port> https://api.ipify.org).
+# hand (curl -x http://<user>:<pass>@<pool-host>:<port> https://api.ipify.org).
 #
 # Credentials never enter git. Create the Secret out-of-band, then run the Job:
 #   kubectl -n scraw create secret generic mihomo-creds \
@@ -42,7 +42,7 @@ spec:
         image: ccr.ccs.tencentyun.com/lawcraw-business/fd-proxy-service:sha-ad65424
         command: ["fd-proxy-service", "seed-mihomo"]
         env:
-        # Canonical DB (guangzhou-xinru fd-postgres :30432 over mesh) — same
+        # Canonical DB (guangzhou-the db host fd-postgres :30432 over mesh) — same
         # secret the control plane reads.
         - name: PROXY_DATABASE_URL
           valueFrom: {secretKeyRef: {name: fd-db-secret, key: DATABASE_URL}}
@@ -50,7 +50,9 @@ spec:
         # Mounting the retired 3008x asset here would probe old ports against
         # the new host and register 29 retired rows.
         - {name: MIHOMO_CREDS_FILE, value: /etc/mihomo/proxy-creds.json}
-        - {name: MIHOMO_HOST, value: "100.64.0.10"}
+        - name: MIHOMO_HOST
+          valueFrom:
+            secretKeyRef: {name: fd-proxy-mihomo, key: host, optional: true}
         volumeMounts:
         - {name: creds, mountPath: /etc/mihomo, readOnly: true}
         resources:

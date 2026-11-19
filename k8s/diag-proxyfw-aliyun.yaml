@@ -57,7 +57,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: diag
-        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
+        image: ccr.ccs.tencentyun.com/finddata/fd-proxy-service:sha-1a1689d
         command: ["python", "/diag/diag.py"]
         env:
         - name: PROXY_REDIS_URL

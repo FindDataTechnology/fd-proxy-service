@@ -1,9 +1,9 @@
 """``mihomo`` pool provider: the fixed-exit international pool on windows-laptop.
 
 The pool is an existing external asset: 35 ``mixed`` (HTTP+SOCKS) listeners on
-the Tailscale address 100.64.0.10 (LAN 192.168.1.3), ports 31081-31115, one
+the Tailscale address <pool-host> (LAN <lan-host>), ports 31081-31115, one
 Basic-auth credential per port, each port pinned to a fixed airport node. The
-old xinru-server2 pool (100.64.0.7:3008x) is retired.
+old the db host-server2 pool (<node>:3008x) is retired.
 
 The listeners do NOT each own an exit IP: measured 2026-11-08, the 24 reachable
 listeners leave through 7 IPs, the busiest carrying 6 of them. That is exactly

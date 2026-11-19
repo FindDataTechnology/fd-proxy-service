@@ -1,7 +1,7 @@
 # proxy-fw — per-node egress forwarder, DaemonSet form (live source of truth).
 #
 # Supersedes the historical Deployment/Job forms in this directory (those pin the
-# retired Harbor registry 100.64.0.8:30880 and are no longer applied). This is the
+# retired Harbor registry <registry>:30880 and are no longer applied). This is the
 # shape actually running in namespace `scraw`: hostNetwork, binds :8080 on every
 # node so in-cluster crawlers reach the forwarder at <node-ip>:8080.
 #

@@ -18,7 +18,7 @@ EXIT_A = "38.76.150.159"
 EXIT_B = "161.114.12.26"
 
 
-def _addr(session, provider, port, exit_ip=None, cap=None, ip="100.64.0.7"):
+def _addr(session, provider, port, exit_ip=None, cap=None, ip="<node>"):
     row = Proxy(
         scheme="http", ip=ip, port=port, status="active",
         label=f"{provider}-{port}", provider=provider,
@@ -51,7 +51,7 @@ def _open(source, unit):
 def test_route_sends_the_source_straight_to_the_configured_provider(session):
     """fred is international: routed to mihomo, it never touches the gost tier
     (which would only warm up through CN egress and collect bans)."""
-    _addr(session, "gost-mesh", 30080, ip="100.64.0.1")
+    _addr(session, "gost-mesh", 30080, ip="<node>")
     _addr(session, "mihomo", 30081, exit_ip=EXIT_A)
     _route(session, "fred", ["mihomo"])
     _unthrottled(session, "fred")
@@ -76,7 +76,7 @@ def test_route_fails_over_within_its_own_list(session, fake_redis):
 def test_exhausted_route_does_not_fall_back_outside_it(session, fake_redis):
     """Spilling onto a gost here would spend the fetch — and a ban — on exactly
     the CN egress the route exists to avoid."""
-    _addr(session, "gost-mesh", 30080, ip="100.64.0.1")
+    _addr(session, "gost-mesh", 30080, ip="<node>")
     _addr(session, "mihomo", 30081, exit_ip=EXIT_A)
     _route(session, "fred", ["mihomo"])
     _unthrottled(session, "fred")
@@ -86,7 +86,7 @@ def test_exhausted_route_does_not_fall_back_outside_it(session, fake_redis):
 
 
 def test_route_naming_an_unregistered_provider_is_skipped(session):
-    mesh = _addr(session, "gost-mesh", 30080, ip="100.64.0.1")
+    mesh = _addr(session, "gost-mesh", 30080, ip="<node>")
     _route(session, "fred", ["does-not-exist", "gost-mesh"])
     _unthrottled(session, "fred")
 
@@ -96,7 +96,7 @@ def test_route_naming_an_unregistered_provider_is_skipped(session):
 
 
 def test_unconfigured_source_uses_the_global_priority_ladder(session):
-    mesh = _addr(session, "gost-mesh", 30080, ip="100.64.0.1")
+    mesh = _addr(session, "gost-mesh", 30080, ip="<node>")
     _addr(session, "mihomo", 30081, exit_ip=EXIT_A)
     _unthrottled(session, "eastmoney")
 
@@ -107,7 +107,7 @@ def test_unconfigured_source_uses_the_global_priority_ladder(session):
 
 
 def test_empty_route_counts_as_unconfigured(session):
-    mesh = _addr(session, "gost-mesh", 30080, ip="100.64.0.1")
+    mesh = _addr(session, "gost-mesh", 30080, ip="<node>")
     _route(session, "eastmoney", [])
     _unthrottled(session, "eastmoney")
 

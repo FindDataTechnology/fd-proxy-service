@@ -304,11 +304,11 @@ def seed_gost_own(session: Session) -> dict[str, str]:
 # selection-logic rewrite (the pool selector already iterates N addresses).
 #
 # Verified-egress mesh set (gost listening on :30080 AND a cross-verify fetch
-# egressed the server's own public IP, 2026-08-20): chengsi (.1 -> 124.220.7.175),
-# aliyun (.2 -> 47.99.94.85), zihan (.4 -> 106.55.20.23). america (.5) gost TCP-
+# egressed the server's own public IP, 2026-08-20): chengsi (.1 -> <origin-host>),
+# aliyun (.2 -> 47.99.94.85), the node (.4 -> 106.55.20.23). america (.5) gost TCP-
 # listens but the egress fetch FAILED (deferred — re-add via the env override or
 # by uncommenting its row once fixed; the circuit self-heals on first failure).
-# The DB/control hosts — guangzhou-xinru (.3, sole canonical PG+Redis) and the
+# The DB/control hosts — guangzhou-the db host (.3, sole canonical PG+Redis) and the
 # shards xinru2 (.6) / xinru3 (.7) — run NO gost by design (control-plane role,
 # not egress). Onboard a new server by adding its mesh IP here (or via the env
 # override) + re-running ``fd-proxy-service seed``; no
@@ -376,16 +376,16 @@ def seed_gost_mesh(session: Session) -> dict[str, str]:
 
 
 # ─── mihomo provider (fixed-exit international pool) ─────────────────────────
-# The pool is an external asset on windows-laptop (tailnet 100.64.0.10, LAN
-# 192.168.1.3 — see docs/proxy-mihomo-windows-migration.md): 35 "mixed"
+# The pool is an external asset on windows-laptop (tailnet <pool-host>, LAN
+# <lan-host> — see docs/proxy-mihomo-windows-migration.md): 35 "mixed"
 # (HTTP+SOCKS) listeners on 31081-31115, each pinned to one airport node, one
 # Basic-auth credential per listener. This seed probes every listener for its
 # real egress IP and registers it.
 #
-# The 2026-10 pool on xinru-server2 (100.64.0.7:3008x) is retired: its rows stay
+# The 2026-10 pool on the db host-server2 (<node>:3008x) is retired: its rows stay
 # in the table as status='retired' for history and must not be re-seeded.
 MIHOMO_NAME = "mihomo"
-MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "100.64.0.10")
+MIHOMO_HOST = os.environ.get("MIHOMO_HOST", "<pool-host>")
 MIHOMO_CREDS_FILE = os.environ.get(
     "MIHOMO_CREDS_FILE", "~/.finddata/mihomo-win-creds.json")
 MIHOMO_NODE_MAP_FILE = os.environ.get(
@@ -399,7 +399,7 @@ MIHOMO_EXIT_PROBE_TIMEOUT = float(os.environ.get("MIHOMO_EXIT_PROBE_TIMEOUT", "8
 # and retiring a healthy port contradicts the pool's expected size.
 MIHOMO_EXIT_PROBE_ATTEMPTS = int(os.environ.get("MIHOMO_EXIT_PROBE_ATTEMPTS", "2"))
 
-# fx02@30082 is dead on the RETIRED xinru-server2 pool and is deliberately NOT
+# fx02@30082 is dead on the RETIRED the db host-server2 pool and is deliberately NOT
 # repaired: fixing it means editing that host's config and reloading, which would
 # drop the sub2api connections sharing it. The port does not exist on the current
 # windows pool (31081-31115), so this skip is a no-op there — kept so a re-seed
@@ -415,10 +415,10 @@ MIHOMO_SOURCE_ROUTES: dict[str, list[str]] = {
     "fred": [MIHOMO_NAME],
     # wbgapi (World Bank API) — 2026-11-10: three of its four circuits were OPEN
     # while the source itself was fine. The default ladder handed it domestic
-    # gost-mesh exits (100.64.0.4/.7/.14); worldbank bans those, so every fetch
+    # gost-mesh exits (<node>/.7/.14); worldbank bans those, so every fetch
     # spent the egress and left the circuit closed to nobody. Measured the same
     # minute: direct egress from a cheap node = 200, via mihomo-kr01
-    # (100.64.0.10:31113) = 200 in 0.30s. International source → pin it to the
+    # (<pool-host>:31113) = 200 in 0.30s. International source → pin it to the
     # foreign pool like fred, instead of burning CN IPs on bans.
     "wbgapi": [MIHOMO_NAME],
 }

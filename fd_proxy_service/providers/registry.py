@@ -48,7 +48,7 @@ _REGISTRY: list[tuple] = [
     # reachable, unlike gost-own's 127.0.0.1 which needs node-IP rewrite).
     (lambda session: PoolProvider("gost-mesh", session, priority=1), 1),
     # mihomo: the fixed-exit international pool on windows-laptop
-    # (100.64.0.10:31081-31115, 24 live ports over 7 exit IPs), reached over
+    # (<pool-host>:31081-31115, 24 live ports over 7 exit IPs), reached over
     # Tailscale. Priority 2 — tried once both gost tiers are circuit-exhausted,
     # and the *first* choice for any source with a route row naming it, since CN
     # egresses are what international sources ban. The provider name is exactly
@@ -62,7 +62,7 @@ _REGISTRY: list[tuple] = [
     # bandwidth is only spent when nothing else works.
     (lambda session: PoolProvider("paid-static", session, priority=3), 3),
     # mihomo-cn: 国内住宅出口（windows-laptop 的 mihomo 深圳家宽节点，
-    # 100.64.0.10:7890，实测出口 163.125.162.244 / 广东深圳联通）。
+    # <pool-host>:7890，实测出口 163.125.162.244 / 广东深圳联通）。
     # Priority 4 —— 它**确实在全局阶梯里**（本表即阶梯），只是排在付费档之后：
     # 只有 gost-own/gost-mesh/mihomo/paid-static 全部 OPEN 或饱和时，未点名的源
     # 才会落到这里兜底。那台盒子 3Mbps 上行与 sub2api 长连接共用，所以 addresses

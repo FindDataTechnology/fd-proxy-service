@@ -21,7 +21,7 @@ EXIT_B = "161.114.12.26"
 def _addr(session, provider, port, exit_ip=None, cap=None):
     """Insert a proxy row, optionally declaring a shared exit IP."""
     row = Proxy(
-        scheme="http", ip="100.64.0.7", port=port, auth=f"fx{port}:pw",
+        scheme="http", ip="<node>", port=port, auth=f"fx{port}:pw",
         status="active", label=f"{provider}-{port}", provider=provider,
         provider_meta=({"exit_ip": exit_ip} if exit_ip else None),
         max_concurrency=cap,

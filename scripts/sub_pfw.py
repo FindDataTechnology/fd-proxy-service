@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Substitute credential placeholders in proxy-fw-job.yaml (run on guangzhou-xinru).
+"""Substitute credential placeholders in proxy-fw-job.yaml (run on guangzhou-the db host).
 
-Usage (on xinru, as ubuntu):
+Usage (on the db host, as ubuntu):
     sudo cat /etc/fd-open-data/db-credentials.env | python3 scripts/sub_pfw.py
 
 Reads the credentials env from stdin (so secrets never appear in argv or ps),
@@ -25,15 +25,15 @@ for line in sys.stdin:
         env[key.strip()] = val
 
 src = open("/tmp/proxy-fw-job.yaml", encoding="utf-8").read()
-if "redis://:__REDIS_PW__@100.64.0.3:30380/1" not in src:
+if "redis://:__REDIS_PW__@<db-host>:30380/1" not in src:
     sys.exit("SUB_FAIL: /tmp/proxy-fw-job.yaml lacks the REDIS placeholder (wrong file?)")
 src = src.replace(
-    "redis://:__REDIS_PW__@100.64.0.3:30380/1",
-    "redis://:%s@100.64.0.3:30380/1" % env["REDIS_PASS"],
+    "redis://:__REDIS_PW__@<db-host>:30380/1",
+    "redis://:%s@<db-host>:30380/1" % env["REDIS_PASS"],
 )
 src = src.replace(
-    "postgresql+psycopg2://fd:__PG_PW__@100.64.0.3:30432/fd_open_data",
-    "postgresql+psycopg2://%s:%s@100.64.0.3:30432/%s"
+    "postgresql+psycopg2://fd:__PG_PW__@<db-host>:30432/fd_open_data",
+    "postgresql+psycopg2://%s:%s@<db-host>:30432/%s"
     % (env["PGUSER"], env["PGPASSWORD"], env["PGDATABASE"]),
 )
 if "redis://:__" in src or ":__PG_PW__" in src:

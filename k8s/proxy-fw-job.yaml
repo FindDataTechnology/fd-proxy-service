@@ -1,6 +1,6 @@
 # Per-worker smart forwarder — hostNetwork Job form (the SA-compatible shape).
 #
-# Runs on each worker cluster (tencent, aliyun, zihan, america) BESIDE the
+# Runs on each worker cluster (each worker cluster) BESIDE the
 # already-deployed gost hostNetwork Job. The `crawl-worker` ServiceAccount the
 # reconciler dispatches through can create ConfigMaps + jobs.batch but NOT
 # Deployments /
@@ -39,28 +39,28 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: proxy-fw
-        image: 100.64.0.8:30880/finddata/fd-proxy-service:sha-1a1689d
+        image: ccr.ccs.tencentyun.com/finddata/fd-proxy-service:sha-1a1689d
         # One image, two entrypoints — the forwarder selects `proxy-fw`.
         command: ["proxy-fw"]
         ports: [{containerPort: 8080}]
         env:
-        # Circuit-state Redis: the canonical fd-redis on guangzhou-xinru
-        # (mesh 100.64.0.3:30380, db 1 — shared with proxy-control on the xinru
-        # control plane; replaces the dedicated proxy-redis on america :30381,
+        # Circuit-state Redis: the canonical fd-redis on guangzhou-the db host
+        # (mesh <db-host>:30380, db 1 — shared with proxy-control on the the db host
+        # control plane; replaces the dedicated proxy-redis previously run on a worker host,
         # retired). PLAIN VALUE (not secretKeyRef): worker clusters run the
         # crawl-worker SA, which can create jobs.batch + configmaps but NOT
         # secrets — same credential-injection pattern as the reconciler's crawl
-        # jobs. __REDIS_PW__ is substituted on guangzhou-xinru from
+        # jobs. __REDIS_PW__ is substituted on guangzhou-the db host from
         # /etc/fd-open-data/db-credentials.env before applying (never printed).
         - name: PROXY_REDIS_URL
-          value: "redis://:__REDIS_PW__@100.64.0.3:30380/1"
-        # Canonical DB (guangzhou-xinru fd-postgres, mesh 100.64.0.3:30432, db
+          value: "redis://:__REDIS_PW__@<db-host>:30380/1"
+        # Canonical DB (guangzhou-the db host fd-postgres, mesh <db-host>:30432, db
         # fd_open_data) — the forwarder reads the proxies/provider rows to
-        # resolve upstream addresses. __PG_PW__ substituted on xinru from the
+        # resolve upstream addresses. __PG_PW__ substituted on the db host from the
         # same credentials file before applying (plain value because the
         # crawl-worker SA cannot create Secrets on worker clusters).
         - name: PROXY_DATABASE_URL
-          value: "postgresql+psycopg2://fd:__PG_PW__@100.64.0.3:30432/fd_open_data"
+          value: "postgresql+psycopg2://fd:__PG_PW__@<db-host>:30432/fd_open_data"
         # gost basic-auth — baked onto the proxies row at seed time (not read on
         # the hot path); this only feeds the /providers health endpoint so it can
         # report whether the default insecure cred is still in effect. ROTATE

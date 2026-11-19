@@ -1,5 +1,7 @@
 # fd-proxy-service
 
+> **Part of the [Base line (寻数·壹座)](https://www.finddatatech.cloud/products/base) of [FindData](https://www.finddatatech.cloud)** — the proxy pool: provider registry, circuit breaker, rate limits and per-source routing for outbound fetches.
+
 **English** | [中文](README.zh-CN.md)
 
 Standalone proxy service for the [finddata](https://github.com/FindDataTechnology/fd-proxy-service)
@@ -92,11 +94,11 @@ rather than sibling-server NodePorts.
 
 ### The `mihomo` fixed-exit pool
 
-A pool of 35 mixed listeners on `100.64.0.10:31081-31115` (windows-laptop over
-Tailscale; LAN side `192.168.1.3`), each pinned to one airport node, each with
+A pool of 35 mixed listeners on `<pool-host>:31081-31115` (windows-laptop over
+Tailscale; LAN side `<lan-host>`), each pinned to one airport node, each with
 its own Basic auth. It is the only reliable international egress for the fleet,
 registered as `mihomo` (priority 2 — after both gost providers, before
-paid-static). The old xinru-server2 pool (`100.64.0.7:3008x`, 27 rows) is
+paid-static). The old the db host-server2 pool (`<node>:3008x`, 27 rows) is
 retired and kept in the table for history only — see
 `docs/proxy-mihomo-windows-migration.md`.
 
@@ -137,7 +139,7 @@ pip install fd-proxy-service
 
 ```bash
 export PROXY_REDIS_URL=redis://...@<proxy-redis-host>:30381/0
-export DATABASE_URL=postgresql://...@guangzhou-xinru:30432/fd_open_data
+export DATABASE_URL=postgresql://...@guangzhou-the db host:30432/fd_open_data
 fd-proxy-service migrate     # additive: add provider + provider_meta cols
 fd-proxy-service seed       # register gost-own + its localhost:30080 addr
 proxy-control               # serve the control API on :8090 (NodePort 30090)

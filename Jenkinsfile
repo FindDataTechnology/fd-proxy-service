@@ -1,9 +1,9 @@
 // ── fd-proxy-service — build image on the cheap cluster, push to Harbor ───────
 //
 // Same shape as the platform repo's Jenkinsfile (fd-craw-private): the built-in
-// agent is the Jenkins pod on cheap-3 with the host docker CLI +
-// /var/run/docker.sock mounted, so `docker build` uses cheap-3's daemon — the
-// one whose daemon.json already lists 100.64.0.8:30880 as an insecure registry.
+// agent is the Jenkins pod on the node with the host docker CLI +
+// /var/run/docker.sock mounted, so `docker build` uses the node's daemon — the
+// one whose daemon.json already lists <registry>:30880 as an insecure registry.
 //
 // Verified on that host (probe, 2026-09-15):
 //   * registry-1.docker.io is UNREACHABLE — plain `FROM python:3.12-slim` cannot
@@ -16,7 +16,7 @@
 // Deployment is pull-based: pushing a tag plus a pod restart IS the deploy.
 //
 // Requires Jenkins credential `harbor-fd-push` (Username with password) — a
-// robot with push on the `finddata` project of 100.64.0.8:30880.
+// robot with push on the `finddata` project of <registry>:30880.
 
 pipeline {
     agent any
@@ -26,7 +26,7 @@ pipeline {
         // Cold builds are the norm (nothing is cached between runs) and the
         // pip install is the slow part; a false timeout throws the work away.
         timeout(time: 60, unit: 'MINUTES')
-        // Two builds would fight over the same :latest tag and over cheap-3's disk.
+        // Two builds would fight over the same :latest tag and over the node's disk.
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
@@ -36,9 +36,9 @@ pipeline {
     }
 
     environment {
-        REGISTRY   = '100.64.0.8:30880'
-        IMAGE      = '100.64.0.8:30880/finddata/fd-proxy-service'
-        // cheap-3 cannot reach Docker Hub. Fallback if daocloud ever breaks:
+        REGISTRY   = '<registry>:30880'
+        IMAGE      = '<registry>:30880/finddata/fd-proxy-service'
+        // the node cannot reach Docker Hub. Fallback if daocloud ever breaks:
         // docker.1panel.live (also verified), or mirror the base into Harbor's
         // `library` project once a library-scoped push credential exists.
         BASE_IMAGE = 'docker.m.daocloud.io/library/python:3.12-slim'
@@ -93,7 +93,7 @@ pipeline {
         always {
             sh 'docker logout "$REGISTRY" || true'
             sh '''#!/bin/bash
-                imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^100.64.0.8:30880/' || true)
+                imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^<registry>:30880/' || true)
                 if [ -n "$imgs" ]; then
                     echo "post-build cleanup: removing local build images:"
                     echo "$imgs"

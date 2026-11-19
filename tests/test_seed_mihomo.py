@@ -66,7 +66,7 @@ def test_registers_the_tailscale_address_and_port(session):
     seed.seed_mihomo(session, creds=CREDS, node_map=NODES, prober=_prober)
     row = _by_label(session)["mihomo-fx01"]
     assert (row.scheme, row.ip, row.port) == ("http", seed.MIHOMO_HOST, 30081)
-    assert seed.MIHOMO_HOST == "100.64.0.10"  # windows-laptop; 100.64.0.7 is retired
+    assert seed.MIHOMO_HOST == "<pool-host>"  # windows-laptop; <node> is retired
     assert row.provider == "mihomo"
 
 
@@ -231,13 +231,13 @@ def test_probe_retries_a_transient_failure(monkeypatch):
     """Measured on the real pool: fx23 timed out once at 8 s, then answered in
     1.8-4.4 s. A single cold dial must not retire a healthy listener."""
     calls = _stub_opener(monkeypatch, fail_first=True)
-    assert seed.probe_exit_ip("100.64.0.7", 30103, "fx23:pw") == "38.76.150.159"
+    assert seed.probe_exit_ip("<node>", 30103, "fx23:pw") == "38.76.150.159"
     assert calls["n"] == 2  # the retry did the work
 
 
 def test_probe_gives_up_after_every_attempt(monkeypatch):
     calls = _stub_opener(monkeypatch, fail_first=False, body=b"<html>nope</html>")
-    assert seed.probe_exit_ip("100.64.0.7", 30082, "fx02:pw", attempts=3) is None
+    assert seed.probe_exit_ip("<node>", 30082, "fx02:pw", attempts=3) is None
     assert calls["n"] == 3
 
 
@@ -245,7 +245,7 @@ def test_probe_gives_up_after_every_attempt(monkeypatch):
 
 def test_real_creds_asset_parses_to_the_35_windows_listeners():
     # The live pool moved to windows-laptop on 2026-11-08 (31081-31115); the old
-    # xinru-server2 asset (~/.finddata/proxy-creds.json, 30081-30108) is retired.
+    # the db host-server2 asset (~/.finddata/proxy-creds.json, 30081-30108) is retired.
     p = pathlib.Path.home() / ".finddata" / "mihomo-win-creds.json"
     if not p.is_file():
         pytest.skip("no local windows mihomo credential file")

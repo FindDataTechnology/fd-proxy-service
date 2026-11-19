@@ -1,7 +1,7 @@
 # crawl-worker ServiceAccount for reconciler dispatch (worker clusters).
 #
 # Applied in the scraw namespace of EVERY worker cluster (tencent, aliyun,
-# zihan, america). The xinru reconciler's ClusterK8sClient authenticates with
+# the node, america). The the db host reconciler's ClusterK8sClient authenticates with
 # this token + the cluster CA (stored as <cluster>.token/<cluster>.ca keys in
 # the worker-kubeconfigs Secret on the control plane) and needs:
 # create ConfigMaps, create Jobs, poll Job status, and DELETE Jobs. Nothing

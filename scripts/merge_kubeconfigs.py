@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Merge worker kubeconfig keys (token+ca) into the control-plane
-worker-kubeconfigs Secret (run on guangzhou-xinru as ubuntu).
+worker-kubeconfigs Secret (run on guangzhou-the db host as ubuntu).
 
-Usage (on xinru, with staged files at /tmp/<cluster>.{token,ca}):
-    python3 scripts/merge_kubeconfigs.py zihan america
+Usage (on the db host, with staged files at /tmp/<cluster>.{token,ca}):
+    python3 scripts/merge_kubeconfigs.py the node america
 
 Reads the existing fd-master/worker-kubeconfigs Secret, PRESERVES every
 existing key (tencent/aliyun/baidu/...), base64-encodes the staged files,
